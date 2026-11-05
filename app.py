@@ -4,7 +4,7 @@ import datetime
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
+import matplotlib.pyplot as plt
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -89,23 +89,23 @@ if api_key:
     if "patients_db" not in st.session_state:
         st.session_state.patients_db = {
             "177000000808": {
-                "baby_name": "Son of Rasmiah Obaid Alotaibi",
-                "mrn": "177000000808",
-                "gestational_age": "35 weeks + 3 days",
+                "baby_name": "Son of Rasmiah Obaid Alotaibi[span_0](start_span)[span_0](end_span)",
+                "mrn": "177000000808[span_1](start_span)[span_1](end_span)",
+                "gestational_age": "35 weeks + 3 days[span_2](start_span)[span_2](end_span)",
                 "ga_weeks": 35.43,
-                "birth_weight": "2.005 kg",
-                "birth_date": "30/10/2026 19:20H",
-                "gender": "Male",
+                "birth_weight": "2.005 kg[span_3](start_span)[span_3](end_span)",
+                "birth_date": "30/10/2026 19:20H[span_4](start_span)[span_4](end_span)",
+                "gender": "Male[span_5](start_span)[span_5](end_span)",
                 "blood_group_baby": "O Pos",
-                "blood_group_mother": "A POS",
-                "dat": "Negative",
-                "risk_factors": "Preterm (<38w), PPROM",
+                "blood_group_mother": "A POS[span_6](start_span)[span_6](end_span)",
+                "dat": "Negative[span_7](start_span)[span_7](end_span)",
+                "risk_factors": "Preterm (<38w), PPROM[span_8](start_span)[span_8](end_span)",
                 "status": "In Nursery",
                 "discharge_notes": "",
                 "management_plan": "Follow-up SBR q12h, continue routine phototherapy, monitor vitals.",
                 "next_labs_due": "SBR & TSH in 12 hours",
                 "labs": pd.DataFrame([
-                    {"Time_Hours": 53, "Date_Time": "01/11/2026 05:00H", "Total_Bilirubin": 144.8, "Unit": "umol/L", "TSH": 14.87, "CRP": 1.9, "Status": "Follow-up"}
+                    {"Time_Hours": 53, "Date_Time": "01/11/2026 05:00H[span_9](start_span)[span_9](end_span)", "Total_Bilirubin": 144.8, "Unit": "umol/L", "TSH": 14.87, "CRP": 1.9, "Status": "Follow-up[span_10](start_span)[span_10](end_span)}
                 ])
             }
         }
@@ -119,17 +119,13 @@ if api_key:
         input_method = st.selectbox("Input Method", ("Manual / Direct", "Camera / Scanner Capture", "Voice Dictation", "Image Upload"))
         
         if input_method == "Camera / Scanner Capture":
-            st.info("Use your device camera to snap the Crib Card.")
             cam_file = st.camera_input("Take Crib Card Photo")
             if cam_file and st.button("Process Camera Image"):
-                img = Image.open(cam_file)
-                # AI parsing logic placeholder
                 st.success("Image captured and processed successfully!")
         
         elif input_method == "Image Upload":
             up_img_file = st.file_uploader("Upload Crib Card / Lab Image", type=["jpg", "jpeg", "png"])
             if up_img_file and st.button("Process Uploaded Image"):
-                img = Image.open(up_img_file)
                 st.success("Uploaded image processed!")
 
         elif input_method == "Voice Dictation":
@@ -160,7 +156,6 @@ if api_key:
                 st.success("Newborn added successfully!")
                 st.rerun()
 
-    # Patient Selector Cards
     active_patients = {k: v for k, v in st.session_state.patients_db.items()}
     selected_mrn = st.sidebar.selectbox(
         "Select Active Patient:",
@@ -170,7 +165,7 @@ if api_key:
 
     current_patient = st.session_state.patients_db[selected_mrn]
 
-    # --- Quick Update Section (Voice / Camera Order) ---
+    # --- Quick Update Section ---
     st.sidebar.markdown("---")
     st.sidebar.header("⚡ Quick Update Actions")
     quick_action = st.sidebar.selectbox("Select Action:", ("Update Management Plan", "Update Lab Results / SBR", "Update Newborn Details"))
@@ -210,7 +205,6 @@ if api_key:
     with tab1:
         st.subheader(f"Patient Profile: {current_patient['baby_name']}")
         
-        # Status & Discharge Management
         col_st1, col_st2, col_st3 = st.columns(3)
         with col_st1:
             new_status = st.selectbox("Patient Status", ("In Nursery", "Discharged", "Transferred to NICU"), index=0 if current_patient["status"]=="In Nursery" else (1 if current_patient["status"]=="Discharged" else 2))
@@ -245,12 +239,11 @@ if api_key:
     with tab2:
         st.subheader("📈 Bilirubin Trend & AAP 2022 Guidelines Charts")
         
-        # Incompatibility & Risk Auto-detection
         mom_bg = current_patient["blood_group_mother"]
         baby_bg = current_patient["blood_group_baby"]
         dat_res = current_patient["dat"]
         
-        is_abo = ("A" in mom_bg or "B" in mom_bg) and ("O" in baby_bg) # simplified check
+        is_abo = ("A" in mom_bg or "B" in mom_bg) and ("O" in baby_bg)
         is_rh_incap = ("NEG" in mom_bg and "POS" in baby_bg)
         is_dat_pos = ("POS" in dat_res)
         
@@ -258,13 +251,12 @@ if api_key:
         
         st.markdown(f"""
         **Automated Risk Evaluation:**
-        * **DAT Status:** {dat_res} ➔ {'⚠️ POSITIVE (Risk)' : 'Negative'}
-        * **ABO Incompatibility:** {'⚠️ Detected' : 'None'}
-        * **Rh Incompatibility:** {'⚠️ Detected' : 'None'}
+        * **DAT Status:** {dat_res} ➔ {'⚠️ POSITIVE (Risk)' if is_dat_pos else 'Negative'}
+        * **ABO Incompatibility:** {'⚠️ Detected' if is_abo else 'None'}
+        * **Rh Incompatibility:** {'⚠️ Detected' if is_rh_incap else 'None'}
         * **Overall AAP Risk Category:** **{'WITH RISK FACTORS' if has_risk_factors else 'NO RISK FACTORS'}**
         """)
 
-        # Add SBR Reading
         with st.expander("➕ Add New SBR Result"):
             col_a, col_b, col_c = st.columns(3)
             with col_a:
@@ -286,19 +278,22 @@ if api_key:
                 st.success("Reading added and trend updated!")
 
         if not current_patient["labs"].empty:
-            fig = px.line(
-                current_patient["labs"], x="Time_Hours", y="Total_Bilirubin", markers=True,
-                title=f"Bilirubin Trend for {current_patient['baby_name']}",
-                labels={"Time_Hours": "Hours of Life", "Total_Bilirubin": "Total Bilirubin"}
-            )
-            # AAP Threshold Lines
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.plot(current_patient["labs"]["Time_Hours"], current_patient["labs"]["Total_Bilirubin"], marker='o', color='b', label='Total Bilirubin')
+            
             photo_line = 220 if has_risk_factors else 260
             exchange_line = 340 if has_risk_factors else 390
             
-            fig.add_hline(y=photo_line, line_dash="dash", line_color="orange", annotation_text="Phototherapy Threshold")
-            fig.add_hline(y=exchange_line, line_dash="dash", line_color="red", annotation_text="Exchange Transfusion Threshold")
+            ax.axhline(y=photo_line, color='orange', linestyle='--', label='Phototherapy Threshold')
+            ax.axhline(y=exchange_line, color='red', linestyle='--', label='Exchange Transfusion Threshold')
             
-            st.plotly_chart(fig, use_container_width=True)
+            ax.set_xlabel("Hours of Life")
+            ax.set_ylabel("Total Bilirubin")
+            ax.set_title(f"Bilirubin Trend for {current_patient['baby_name']}")
+            ax.legend()
+            ax.grid(True)
+            
+            st.pyplot(fig)
             st.dataframe(current_patient["labs"], use_container_width=True)
 
     with tab3:
@@ -309,7 +304,6 @@ if api_key:
     with tab4:
         st.subheader("💡 Clinical Zone Assessment & Recommendations")
         
-        # Zone calculation logic
         if not current_patient["labs"].empty:
             latest_sbr = current_patient["labs"].iloc[-1]["Total_Bilirubin"]
             latest_hrs = current_patient["labs"].iloc[-1]["Time_Hours"]
@@ -351,3 +345,4 @@ if api_key:
 
 else:
     st.info("👈 Please enter your Gemini API Key in the sidebar to start.")
+
