@@ -56,11 +56,9 @@ def init_db() -> None:
             mrn TEXT,
             time_hours REAL,
             datetime_str TEXT,
-            total_bilirubin_umol REAL,
-            unit_original TEXT,
-            tsh REAL,
-            crp REAL,
-            other_tests TEXT,
+            test_name TEXT,
+            test_value REAL,
+            unit TEXT,
             FOREIGN KEY (mrn) REFERENCES patients (mrn)
         )
     ''')
@@ -74,41 +72,6 @@ def init_db() -> None:
         )
     ''')
     conn.commit()
-    
-    cursor.execute("SELECT COUNT(*) FROM patients WHERE mrn = ?", ("177000000808",))
-    if cursor.fetchone()[0] == 0:
-        cursor.execute('''
-            INSERT INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            "177000000808",
-            "Son of Rasmiah Obaid Alotaibi",
-            35.43,
-            2.005,
-            "2026-10-30 19:20:00",
-            "Male",
-            "A POS",
-            "O POS",
-            "Negative",
-            "Preterm (<38w), PPROM",
-            "In Nursery",
-            "",
-            "Follow-up SBR q12h, continue routine phototherapy, monitor vitals.",
-            "SBR & TSH in 12 hours"
-        ))
-        cursor.execute('''
-            INSERT INTO labs (mrn, time_hours, datetime_str, total_bilirubin_umol, unit_original, tsh, crp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            "177000000808",
-            33.67,
-            "2026-11-01 05:00:00",
-            144.8,
-            "umol/L",
-            14.87,
-            1.9
-        ))
-        conn.commit()
     conn.close()
 
 init_db()
@@ -188,29 +151,18 @@ except Exception:
 
 api_key = st.sidebar.text_input("Gemini API Key", value=api_key_env or "", type="password")
 
-# --- Direct REST API Helper for Gemini (No dependency issues) ---
+# --- Direct REST API Helper for Gemini ---
 import base64
 
 def call_gemini_rest(prompt: str, image_bytes=None, mime_type="image/jpeg") -> str:
     if not api_key:
         return "Error: Gemini API Key is missing."
-    
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    
     parts = [{"text": prompt}]
     if image_bytes:
         encoded = base64.b64encode(image_bytes).decode('utf-8')
-        parts.append({
-            "inline_data": {
-                "mime_type": mime_type,
-                "data": encoded
-            }
-        })
-        
-    payload = {
-        "contents": [{"parts": parts}]
-    }
-    
+        parts.append({"inline_data": {"mime_type": mime_type, "data": encoded}})
+    payload = {"contents": [{"parts": parts}]}
     headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -230,14 +182,11 @@ def extract_medical_data_with_gemini(image_bytes=None, audio_bytes=None, mime_ty
     """
     file_bytes = image_bytes if image_bytes else audio_bytes
     res_text = call_gemini_rest(prompt, image_bytes=file_bytes, mime_type=mime_type)
-    
-    # Clean markdown if returned
     cleaned = res_text.strip()
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:-3].strip()
     elif cleaned.startswith("```"):
         cleaned = cleaned[3:-3].strip()
-        
     try:
         return json.loads(cleaned)
     except Exception:
@@ -266,7 +215,6 @@ def parse_blood_group(bg_str: str) -> tuple:
         abo = "B"
     elif "O" in s:
         abo = "O"
-        
     if "NEG" in s or "-" in s:
         rh = "NEG"
     elif "POS" in s or "+" in s:
@@ -276,7 +224,6 @@ def parse_blood_group(bg_str: str) -> tuple:
 def check_incompatibilities(mother_bg: str, baby_bg: str, dat: str) -> tuple:
     m_abo, m_rh = parse_blood_group(mother_bg)
     b_abo, b_rh = parse_blood_group(baby_bg)
-    
     abo_risk = (m_abo == "O" and b_abo in ["A", "B", "AB"]) if (m_abo and b_abo) else False
     rh_risk = (m_rh == "NEG" and b_rh == "POS") if (m_rh and b_rh) else False
     dat_pos = dat is not None and ("POS" in dat.strip().upper())
@@ -315,45 +262,35 @@ def compute_hours_of_life(birth_dt_str: str, current_dt_str: str) -> float:
 def get_aap_thresholds(ga_weeks: float, hours: float, has_risk: bool) -> tuple:
     base_photo = 170.0 if has_risk else 220.0
     base_exchange = 300.0 if has_risk else 380.0
-    
     if hours < 24:
         factor = 0.65 + (hours / 24.0) * 0.35
     else:
         factor = 1.0 + min(0.5, (hours - 24) / 150.0)
-        
     ga_factor = 1.0 if ga_weeks >= 38 else (0.85 if ga_weeks >= 35 else 0.75)
-    
     photo = base_photo * factor * ga_factor
     exchange = base_exchange * factor * ga_factor
     return round(photo, 1), round(exchange, 1)
 
 def calculate_rate_of_rise(labs_df: pd.DataFrame) -> float:
-    if labs_df is None or len(labs_df) < 2:
+    if labs_df is None or labs_df.empty:
         return 0.0
-    valid_bili = labs_df[labs_df["Total_Bilirubin"].notnull() & (labs_df["Total_Bilirubin"] > 0)].sort_values("Time_Hours")
-    if len(valid_bili) < 2:
+    bili_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
+    if len(bili_df) < 2:
         return 0.0
-    r1 = valid_bili.iloc[-2]
-    r2 = valid_bili.iloc[-1]
-    dh = r2["Time_Hours"] - r1["Time_Hours"]
+    sorted_df = bili_df.sort_values("time_hours")
+    r1 = sorted_df.iloc[-2]
+    r2 = sorted_df.iloc[-1]
+    dh = r2["time_hours"] - r1["time_hours"]
     if dh <= 0:
         return 0.0
-    dv = r2["Total_Bilirubin"] - r1["Total_Bilirubin"]
+    dv = r2["test_value"] - r1["test_value"]
     return round(dv / dh, 2)
 
 # --- Main App Layout ---
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Census ({current_date_str})")
 
-st.subheader("📊 Nursery Census Overview")
-conn = get_db_connection()
-census_df = pd.read_sql("SELECT mrn, baby_name, ga_weeks, birth_weight, status FROM patients", conn)
-conn.close()
-if not census_df.empty:
-    st.dataframe(census_df, use_container_width=True)
-
-st.sidebar.header("🏥 Nursery Census Management")
-
+# Fetch patients from DB
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 patients_cursor.execute("SELECT * FROM patients")
@@ -365,12 +302,6 @@ for p in db_patients:
     conn = get_db_connection()
     labs_df = pd.read_sql("SELECT * FROM labs WHERE mrn = ? ORDER BY time_hours", conn, params=(p["mrn"],))
     conn.close()
-    
-    labs_df = labs_df.rename(columns={
-        "time_hours": "Time_Hours", "datetime_str": "Date_Time",
-        "total_bilirubin_umol": "Total_Bilirubin",
-        "unit_original": "Unit_original", "tsh": "TSH", "crp": "CRP"
-    })
     
     patients_dict[p["mrn"]] = {
         "baby_name": p["baby_name"],
@@ -392,43 +323,54 @@ for p in db_patients:
         "labs": labs_df
     }
 
-with st.sidebar.expander("➕ Add New Newborn (AI Powered)"):
-    new_mrn = st.text_input("Baby MRN", key="new_mrn_input")
-    new_name = st.text_input("Baby / Mother Name", key="new_name_input")
-    input_method = st.selectbox("Input Method", ("Manual / Direct", "Camera Capture (Crib Card)", "Image Upload", "Voice Dictation"))
+# --- Main Page: Add New Newborn with AI Input Hub ---
+st.markdown("---")
+with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(patients_dict) == 0):
+    st.markdown("إدخال مولود جديد بالذكاء الاصطناعي (الكاميرا، رفع الصور، الميكروفون، أو الإدخال اليدوي):")
+    
+    col_input1, col_input2 = st.columns(2)
+    with col_input1:
+        new_mrn = st.text_input("Baby MRN (رقم الملف الطبي)")
+        new_name = st.text_input("Baby / Mother Name (اسم الطفل / الأم)")
+    
+    input_method = st.radio("اختر طريقة إدخال البيانات:", ("Manual / Direct (يدوي)", "Open Camera (فتح الكاميرا)", "Upload Photo (رفع صورة الكريب كارد)", "Open Microphone (تسجيل صوتي)"))
     
     extracted_json = None
-    if input_method == "Camera Capture (Crib Card)":
-        cam_file = st.camera_input("Take Crib Card Photo")
-        if cam_file and st.button("Extract with AI"):
-            extracted_json = extract_medical_data_with_gemini(image_bytes=cam_file.getvalue())
-    elif input_method == "Image Upload":
-        up_img_file = st.file_uploader("Upload Crib Card / Lab Image", type=["jpg", "jpeg", "png"])
-        if up_img_file and st.button("Extract with AI"):
-            extracted_json = extract_medical_data_with_gemini(image_bytes=up_img_file.getvalue())
-    elif input_method == "Voice Dictation":
-        audio_file = st.audio_input("Record Patient Voice Notes")
-        if audio_file and st.button("Extract via Voice AI"):
-            extracted_json = extract_medical_data_with_gemini(audio_bytes=audio_file.read(), mime_type=audio_file.type if hasattr(audio_file, 'type') else "audio/wav")
+    if input_method == "Open Camera (فتح الكاميرا)":
+        cam_file = st.camera_input("Take Crib Card / Document Photo")
+        if cam_file and st.button("Extract Data with AI 🚀"):
+            with st.spinner("جاري تحليل الصورة بالذكاء الاصطناعي..."):
+                extracted_json = extract_medical_data_with_gemini(image_bytes=cam_file.getvalue())
+    elif input_method == "Upload Photo (رفع صورة الكريب كارد)":
+        up_img_file = st.file_uploader("Upload Crib Card / Lab Report", type=["jpg", "jpeg", "png"])
+        if up_img_file and st.button("Extract Data with AI 🚀"):
+            with st.spinner("جاري قراءة الصورة..."):
+                extracted_json = extract_medical_data_with_gemini(image_bytes=up_img_file.getvalue())
+    elif input_method == "Open Microphone (تسجيل صوتي)":
+        audio_file = st.audio_input("Record Patient Clinical Details")
+        if audio_file and st.button("Extract Data via Voice AI 🚀"):
+            with st.spinner("جاري تفريغ وتحليل الصوت..."):
+                extracted_json = extract_medical_data_with_gemini(audio_bytes=audio_file.read(), mime_type=audio_file.type if hasattr(audio_file, 'type') else "audio/wav")
 
     if extracted_json and isinstance(extracted_json, dict):
-        st.info("Review AI extracted data:")
+        st.success("✅ تم استخراج البيانات بنجاح! راجعها وقم بالتأكيد:")
         rev_mrn = st.text_input("Review MRN", value=str(extracted_json.get("mrn", new_mrn)))
         rev_name = st.text_input("Review Name", value=str(extracted_json.get("baby_name", new_name)))
         rev_ga = st.number_input("Review GA (weeks)", value=float(extracted_json.get("gestational_age_weeks", 38.0)))
         rev_wt = st.number_input("Review Weight (kg)", value=float(extracted_json.get("birth_weight_kg", 3.0)))
-        if st.button("Confirm and Save New Patient"):
+        
+        if st.button("Confirm and Save New Patient to Census"):
             conn = get_db_connection()
             conn.execute(
                 "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (rev_mrn, rev_name, rev_ga, rev_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Unknown", str(extracted_json.get("mother_blood_group", "Unknown")), str(extracted_json.get("baby_blood_group", "Unknown")), str(extracted_json.get("dat_status", "Negative")), str(extracted_json.get("risk_factors", "None")), "In Nursery", "", str(extracted_json.get("management_plan", "Routine care")), "Pending")
+                (rev_mrn or "UNKNOWN", rev_name or "Newborn", rev_ga, rev_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Unknown", str(extracted_json.get("mother_blood_group", "Unknown")), str(extracted_json.get("baby_blood_group", "Unknown")), str(extracted_json.get("dat_status", "Negative")), str(extracted_json.get("risk_factors", "None")), "In Nursery", "", str(extracted_json.get("management_plan", "Routine care")), "Pending")
             )
             conn.commit()
             conn.close()
-            st.success("Patient created via AI successfully!")
+            st.success("تم حفظ المريض بنجاح!")
             st.rerun()
 
-    if input_method == "Manual / Direct" and st.button("Create Newborn Record"):
+    if input_method == "Manual / Direct (يدوي)" and st.button("Create Newborn Record"):
         if new_mrn:
             conn = get_db_connection()
             conn.execute(
@@ -437,9 +379,24 @@ with st.sidebar.expander("➕ Add New Newborn (AI Powered)"):
             )
             conn.commit()
             conn.close()
-            st.success("Newborn added!")
+            st.success("تم إضافة المريض بنجاح!")
             st.rerun()
 
+st.markdown("---")
+
+# --- Census Overview Table at Top ---
+st.subheader("📊 Nursery Census Overview")
+conn = get_db_connection()
+census_df = pd.read_sql("SELECT mrn, baby_name, ga_weeks, birth_weight, status FROM patients", conn)
+conn.close()
+if not census_df.empty:
+    st.dataframe(census_df, use_container_width=True)
+else:
+    st.info("لا توجد حالات مسجلة حالياً في الحضانة. استخدم خانة (Add New Newborn) أعلاه لإضافة أول مولود.")
+    st.stop()
+
+# Patient Selection Sidebar
+st.sidebar.header("🏥 Active Patient Selection")
 patient_keys = list(patients_dict.keys())
 selected_mrn = st.sidebar.selectbox(
     "Select Active Patient:",
@@ -527,59 +484,83 @@ with tab2:
         with col_c:
             sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"])
         
-        if st.button("Add Reading & Plot Trend"):
+        if st.button("Add SBR Reading & Plot Trend"):
             val_umol = convert_to_umol(sbr_val, sbr_unit)
             conn = get_db_connection()
-            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, total_bilirubin_umol, unit_original) VALUES (?, ?, ?, ?, ?)",
-                         (current_patient["mrn"], hours_life, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), val_umol, sbr_unit))
+            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                         (current_patient["mrn"], hours_life, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", val_umol, "umol/L"))
             conn.commit()
             conn.close()
-            st.success("Reading added successfully!")
+            st.success("SBR Reading added successfully!")
             st.rerun()
 
     labs_df = current_patient["labs"]
     if not labs_df.empty:
-        ror = calculate_rate_of_rise(labs_df)
-        if ror > 8.5:
-            st.error(f"⚠️ **Rapid Rate of Rise Warning:** Bilirubin is rising at {ror} µmol/L per hour!")
-        else:
-            st.info(f"📊 Current rate of rise: {ror} µmol/L per hour.")
-            
-        valid_bili_chart = labs_df[labs_df["Total_Bilirubin"].notnull() & (labs_df["Total_Bilirubin"] > 0)]
-        if not valid_bili_chart.empty:
-            chart_data = valid_bili_chart.set_index("Time_Hours")[["Total_Bilirubin"]]
+        bili_trend_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
+        if not bili_trend_df.empty:
+            ror = calculate_rate_of_rise(labs_df)
+            if ror > 8.5:
+                st.error(f"⚠️ **Rapid Rate of Rise Warning:** Bilirubin is rising at {ror} µmol/L per hour!")
+            else:
+                st.info(f"📊 Current rate of rise: {ror} µmol/L per hour.")
+                
+            chart_data = bili_trend_df.set_index("time_hours")[["test_value"]]
             st.line_chart(chart_data)
+        else:
+            st.info("لا توجد قراءات سابقة للبيليروبين مرسومة حتى الآن. أضف قراءة من الأعلى.")
+            
+        st.markdown("### سجل الفحوصات الكامل")
         st.dataframe(labs_df, use_container_width=True)
 
 with tab3:
-    st.subheader("🧪 Comprehensive Laboratory Results")
-    st.markdown("Flexible lab tracking for TSH, CBC, CRP, Electrolytes, Renal, and Liver functions.")
+    st.subheader("🧪 Comprehensive Laboratory Results & Custom Labs")
+    st.markdown("إدخال وتتبع كافة التحاليل المخبرية بدقة (CBC, Chemistry, Renal, Electrolytes, TSH, Free T4, وغيرها).")
     
-    with st.expander("➕ Add General Lab Test"):
-        t_name = st.text_input("Test Name (e.g. TSH, CRP, Creatinine)")
-        t_val = st.number_input("Value", value=0.0)
-        t_unit = st.text_input("Unit", value="")
-        if st.button("Save Lab Entry"):
-            current_hof = compute_hours_of_life(current_patient["birth_date"], datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    with st.expander("➕ Add Any Laboratory Test (CBC, TSH, Sodium, Urea, etc.)"):
+        col_t1, col_t2, col_t3 = st.columns(3)
+        with col_t1:
+            test_category = st.selectbox("Test Category", ["SBR (Bilirubin)", "CBC", "Renal Profile / Electrolytes", "Thyroid (Cord/Baby TSH & T4)", "Bone Profile", "Other Custom Lab"])
+        with col_t2:
+            if test_category == "SBR (Bilirubin)":
+                custom_test_name = "SBR"
+            elif test_category == "Thyroid (Cord/Baby TSH & T4)":
+                custom_test_name = st.selectbox("Select Test", ["Cord TSH", "Baby TSH", "Free T4", "Total T4"])
+            elif test_category == "Renal Profile / Electrolytes":
+                custom_test_name = st.selectbox("Select Test", ["Sodium (Na)", "Potassium (K)", "Chloride (Cl)", "Urea", "Creatinine"])
+            elif test_category == "CBC":
+                custom_test_name = st.selectbox("Select Test", ["Hemoglobin (Hb)", "WBC", "Platelets", "CRP", "Neutrophils"])
+            else:
+                custom_test_name = st.text_input("Enter Lab Name (e.g. Calcium, Albumin, AST, ALT)")
+        with col_t3:
+            test_val = st.number_input("Test Value", value=0.0)
+            test_unit = st.text_input("Unit (e.g. mmol/L, mg/dL, mIU/L)", value="")
+
+        test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"], datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+
+        if st.button("Save Lab Result"):
             conn = get_db_connection()
-            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, total_bilirubin_umol, unit_original, tsh, crp) VALUES (?, ?, ?, NULL, ?, ?, ?)",
-                         (current_patient["mrn"], current_hof, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t_unit or "unit", t_val if 'tsh' in t_name.lower() else None, t_val if 'crp' in t_name.lower() else None))
+            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                         (current_patient["mrn"], test_hours, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), custom_test_name, test_val, test_unit))
             conn.commit()
             conn.close()
-            st.success("Lab saved!")
+            st.success(f"تم حفظ تحليل ({custom_test_name}) بنجاح!")
             st.rerun()
             
-    st.dataframe(current_patient["labs"], use_container_width=True)
+    st.markdown("### جميع التحاليل والنتائج المسجلة للمريض:")
+    if not current_patient["labs"].empty:
+        st.dataframe(current_patient["labs"], use_container_width=True)
+    else:
+        st.info("لا توجد تحاليل مسجلة لهذا المريض بعد.")
 
 with tab4:
     st.subheader("💡 Clinical Zone Assessment & Recommendations")
     
     labs_df = current_patient["labs"]
-    valid_labs = labs_df[labs_df["Total_Bilirubin"].notnull() & (labs_df["Total_Bilirubin"] > 0)] if not labs_df.empty else pd.DataFrame()
+    bili_labs = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])] if not labs_df.empty else pd.DataFrame()
     
-    if not valid_labs.empty:
-        latest_sbr = valid_labs.iloc[-1]["Total_Bilirubin"]
-        latest_hrs = valid_labs.iloc[-1]["Time_Hours"]
+    if not bili_labs.empty:
+        latest_sbr = bili_labs.iloc[-1]["test_value"]
+        latest_hrs = bili_labs.iloc[-1]["time_hours"]
         
         photo_thresh, exchange_thresh = get_aap_thresholds(current_patient.get("ga_weeks", 38.0), latest_hrs, has_risk_factors)
         
@@ -595,10 +576,10 @@ with tab4:
     else:
         st.info("No SBR results recorded yet.")
         
-    if api_key and not valid_labs.empty and st.button("Generate AI Clinical Summary"):
+    if api_key and not bili_labs.empty and st.button("Generate AI Clinical Summary"):
         with st.spinner("Generating expert clinical assessment..."):
-            latest_val = valid_labs.iloc[-1]["Total_Bilirubin"]
-            latest_h = valid_labs.iloc[-1]["Time_Hours"]
+            latest_val = bili_labs.iloc[-1]["test_value"]
+            latest_h = bili_labs.iloc[-1]["time_hours"]
             risk_desc = current_patient["risk_factors"]
             summary_text = get_ai_clinical_summary(current_patient, latest_val, latest_h, risk_desc)
             st.success("AI Summary Generated:")
@@ -608,9 +589,11 @@ with tab5:
     st.subheader("📤 Shift Handover (Ready for WhatsApp)")
     
     latest_sbr_txt = "N/A"
-    if not current_patient["labs"].empty and len(current_patient["labs"][current_patient["labs"]["Total_Bilirubin"].notnull() & (current_patient["labs"]["Total_Bilirubin"] > 0)]) > 0:
-        row = current_patient["labs"][current_patient["labs"]["Total_Bilirubin"].notnull() & (current_patient["labs"]["Total_Bilirubin"] > 0)].iloc[-1]
-        latest_sbr_txt = f"{row['Total_Bilirubin']} {row['Unit_original']} at {row['Time_Hours']} hours"
+    if not current_patient["labs"].empty:
+        bili_row = current_patient["labs"][current_patient["labs"]["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
+        if not bili_row.empty:
+            r = bili_row.iloc[-1]
+            latest_sbr_txt = f"{r['test_value']} {r['unit']} at {r['time_hours']} hours"
         
     handover_text = f"""📋 NEONATAL NURSERY SHIFT HANDOVER
 Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
