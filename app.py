@@ -4,7 +4,6 @@ import datetime
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -278,22 +277,8 @@ if api_key:
                 st.success("Reading added and trend updated!")
 
         if not current_patient["labs"].empty:
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(current_patient["labs"]["Time_Hours"], current_patient["labs"]["Total_Bilirubin"], marker='o', color='b', label='Total Bilirubin')
-            
-            photo_line = 220 if has_risk_factors else 260
-            exchange_line = 340 if has_risk_factors else 390
-            
-            ax.axhline(y=photo_line, color='orange', linestyle='--', label='Phototherapy Threshold')
-            ax.axhline(y=exchange_line, color='red', linestyle='--', label='Exchange Transfusion Threshold')
-            
-            ax.set_xlabel("Hours of Life")
-            ax.set_ylabel("Total Bilirubin")
-            ax.set_title(f"Bilirubin Trend for {current_patient['baby_name']}")
-            ax.legend()
-            ax.grid(True)
-            
-            st.pyplot(fig)
+            chart_data = current_patient["labs"].set_index("Time_Hours")[["Total_Bilirubin"]]
+            st.line_chart(chart_data)
             st.dataframe(current_patient["labs"], use_container_width=True)
 
     with tab3:
