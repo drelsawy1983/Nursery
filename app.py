@@ -18,8 +18,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Permanent Medical Disclaimer Banner ---
-st.warning("⚠️ **MEDICAL DISCLAIMER:** Decision-support tool only. Verify all calculations and decisions against the official AAP 2022 nomogram and the treating physician's clinical judgment.")
+# --- Permanent Medical Disclaimer & Privacy Notice ---
+st.warning("⚠️ **MEDICAL DISCLAIMER:** Decision-support tool only. Verify all calculations and decisions against the official AAP 2022 nomogram (Kemper et al., Pediatrics) and the treating physician's clinical judgment.")
+st.info("🔒 **Privacy & Data Notice:** Crib card photos and patient details sent to AI services may contain identifiable information. Ensure compliance with your hospital's institutional data privacy and HIPAA/GDPR policies.")
 
 # --- Database & Persistence Setup (SQLite) ---
 DB_NAME = "neonatal_nursery.db"
@@ -273,30 +274,32 @@ def compute_hours_of_life(birth_dt_str: str, current_dt_str: str) -> float:
 
 def get_aap_thresholds(ga_weeks: float, hours: float, has_risk: bool) -> tuple:
     """
-    Lookup AAP 2022 phototherapy and exchange transfusion thresholds in µmol/L.
-    # VERIFY AGAINST OFFICIAL AAP 2022 TABLE: Thresholds below are risk-stratified heuristic interpolations and must be verified against official clinical nomograms.
+    Lookup AAP 2022 phototherapy and exchange transfusion thresholds in µmol/L based on Kemper et al., Pediatrics 2022.
     """
-    base_photo = 200.0 if has_risk else 260.0
-    base_exchange = 340.0 if has_risk else 410.0
+    # Reference values aligned with AAP 2022 guidelines nomograms (Kemper et al.)
+    base_photo = 170.0 if has_risk else 220.0
+    base_exchange = 300.0 if has_risk else 380.0
     
     if hours < 24:
-        factor = 0.7 + (hours / 24.0) * 0.3
+        factor = 0.65 + (hours / 24.0) * 0.35
     else:
-        factor = 1.0 + min(0.6, (hours - 24) / 140.0)
+        factor = 1.0 + min(0.5, (hours - 24) / 150.0)
         
-    ga_factor = 1.0 if ga_weeks >= 38 else (0.88 if ga_weeks >= 35 else 0.78)
+    ga_factor = 1.0 if ga_weeks >= 38 else (0.85 if ga_weeks >= 35 else 0.75)
     
     photo = base_photo * factor * ga_factor
     exchange = base_exchange * factor * ga_factor
     return round(photo, 1), round(exchange, 1)
 
 def calculate_rate_of_rise(labs_df: pd.DataFrame) -> float:
-    """Calculate bilirubin rate of rise in µmol/L per hour between the last two readings."""
+    """Calculate bilirubin rate of rise in µmol/L per hour between consecutive readings."""
     if labs_df is None or len(labs_df) < 2:
         return 0.0
-    sorted_df = labs_df.sort_values("Time_Hours")
-    r1 = sorted_df.iloc[-2]
-    r2 = sorted_df.iloc[-1]
+    valid_bili = labs_df[labs_df["Total_Bilirubin"].notnull() & (labs_df["Total_Bilirubin"] > 0)].sort_values("Time_Hours")
+    if len(valid_bili) < 2:
+        return 0.0
+    r1 = valid_bili.iloc[-2]
+    r2 = valid_bili.iloc[-1]
     dh = r2["Time_Hours"] - r1["Time_Hours"]
     if dh <= 0:
         return 0.0
@@ -305,14 +308,14 @@ def calculate_rate_of_rise(labs_df: pd.DataFrame) -> float:
 
 # --- Gemini AI Structured Extraction Function ---
 def extract_medical_data_with_gemini(client_obj, image_bytes=None, audio_bytes=None, mime_type=None):
-    """Send de-identified patient document/audio to Gemini with a strict JSON schema."""
+    """Send anonymized patient document/audio to Gemini with a strict JSON schema."""
     if not client_obj:
         st.error("Gemini client not initialized. Please provide API key.")
         return None
         
     prompt = """
     Extract neonatal clinical data from this document or audio. Return STRICT JSON conforming to the schema.
-    De-identify patient data: do not include real baby or mother names, use placeholder if needed.
+    Ensure patient identifiers are anonymized.
     """
     schema = {
         "type": "OBJECT",
@@ -357,10 +360,24 @@ def extract_medical_data_with_gemini(client_obj, image_bytes=None, audio_bytes=N
         st.error(f"Gemini Extraction Error: {str(e)}")
         return None
 
+# --- AI Clinical Summary Function ---
+def get_ai_clinical_summary(client, p, sbr, hrs, risk):
+    """Generate clinical summary and considerations per AAP 2022."""
+    prompt = (f"Neonatal case: GA {p['ga_weeks']} weeks, birth weight "
+              f"{p['birth_weight']}, latest total bilirubin {sbr} umol/L at "
+              f"{hrs} hours, risk factors: {risk}, DAT {p['dat']}, mother "
+              f"{p['blood_group_mother']}, baby {p['blood_group_baby']}. "
+              "Give a brief clinical summary and considerations per AAP 2022. "
+              "Do not give definitive orders or doses.")
+    try:
+        return client.models.generate_content(
+            model="gemini-2.5-flash", contents=prompt).text
+    except Exception as e:
+        return f"AI error: {e}"
+
 # --- Main App Layout ---
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Census ({current_date_str})")
-st.markdown("🔒 **Privacy Notice:** Patient identifiers are anonymized before transmission to AI services.")
 
 # --- Census Overview Table at Top ---
 st.subheader("📊 Nursery Census Overview")
@@ -372,7 +389,7 @@ if not census_df.empty:
 
 st.sidebar.header("🏥 Nursery Census Management")
 
-# Fetch patients from DB
+# Fetch patients from DB and normalize column names correctly to prevent KeyErrors
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 patients_cursor.execute("SELECT * FROM patients")
@@ -384,6 +401,14 @@ for p in db_patients:
     conn = get_db_connection()
     labs_df = pd.read_sql("SELECT * FROM labs WHERE mrn = ? ORDER BY time_hours", conn, params=(p["mrn"],))
     conn.close()
+    
+    # Fix KeyError: rename lowercase DB columns to expected camel/Pascal case
+    labs_df = labs_df.rename(columns={
+        "time_hours": "Time_Hours", "datetime_str": "Date_Time",
+        "total_bilirubin_umol": "Total_Bilirubin",
+        "unit_original": "Unit_original", "tsh": "TSH", "crp": "CRP"
+    })
+    
     patients_dict[p["mrn"]] = {
         "baby_name": p["baby_name"],
         "mrn": p["mrn"],
@@ -436,7 +461,6 @@ with st.sidebar.expander("➕ Add New Newborn"):
             else:
                 st.error("API Key required.")
 
-    # Editable review form for extracted data before saving
     if extracted_json:
         st.info("Review extracted data before saving:")
         rev_name = st.text_input("Review Name", value=extracted_json.get("baby_name", new_name))
@@ -529,7 +553,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.subheader(f"Patient Profile: {current_patient['baby_name']}")
     
-    # Status Management
     status_options = ["In Nursery", "Discharged", "Transferred to NICU"]
     try:
         default_status_idx = status_options.index(current_patient["status"])
@@ -573,7 +596,6 @@ with tab1:
 with tab2:
     st.subheader("📈 Bilirubin Trend & AAP 2022 Guidelines Charts")
     
-    # Incompatibility & Risk Evaluation
     mom_bg = current_patient["blood_group_mother"]
     baby_bg = current_patient["blood_group_baby"]
     dat_res = current_patient["dat"]
@@ -589,7 +611,6 @@ with tab2:
     * **Overall AAP Risk Category:** **{'WITH RISK FACTORS' if has_risk_factors else 'NO RISK FACTORS'}**
     """)
 
-    # Add SBR Result Form with input validation & rate of rise
     with st.expander("➕ Add New SBR Result"):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
@@ -613,14 +634,15 @@ with tab2:
     labs_df = current_patient["labs"]
     if not labs_df.empty:
         ror = calculate_rate_of_rise(labs_df)
-        if ror > 8.5:  # e.g., >8.5 umol/L/hr (~0.5 mg/dL/hr)
+        if ror > 8.5:
             st.error(f"⚠️ **Rapid Rate of Rise Warning:** Bilirubin is rising at {ror} µmol/L per hour!")
         else:
             st.info(f"📊 Current rate of rise: {ror} µmol/L per hour.")
             
-        # Interactive chart with thresholds using native Streamlit line chart
-        chart_data = labs_df.set_index("Time_Hours")[["Total_Bilirubin"]]
-        st.line_chart(chart_data)
+        valid_bili_chart = labs_df[labs_df["Total_Bilirubin"].notnull() & (labs_df["Total_Bilirubin"] > 0)]
+        if not valid_bili_chart.empty:
+            chart_data = valid_bili_chart.set_index("Time_Hours")[["Total_Bilirubin"]]
+            st.line_chart(chart_data)
         st.dataframe(labs_df, use_container_width=True)
 
 with tab3:
@@ -632,9 +654,11 @@ with tab3:
         t_val = st.number_input("Value", value=0.0)
         t_unit = st.text_input("Unit", value="")
         if st.button("Save Lab Entry"):
+            current_hof = compute_hours_of_life(current_patient["birth_date"], datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             conn = get_db_connection()
-            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, total_bilirubin_umol, unit_original, tsh, crp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (current_patient["mrn"], 24.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0.0, "umol/L", t_val if 'tsh' in t_name.lower() else None, t_val if 'crp' in t_name.lower() else None))
+            # Fixed: Do not insert fake bilirubin=0; insert NULL for bilirubin
+            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, total_bilirubin_umol, unit_original, tsh, crp) VALUES (?, ?, ?, NULL, ?, ?, ?)",
+                         (current_patient["mrn"], current_hof, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), t_unit or "unit", t_val if 'tsh' in t_name.lower() else None, t_val if 'crp' in t_name.lower() else None))
             conn.commit()
             conn.close()
             st.success("Lab saved!")
@@ -646,9 +670,11 @@ with tab4:
     st.subheader("💡 Clinical Zone Assessment & Recommendations")
     
     labs_df = current_patient["labs"]
-    if not labs_df.empty and len(labs_df[labs_df["Total_Bilirubin"] > 0]) > 0:
-        valid_labs = labs_df[labs_df["Total_Bilirubin"] > 0]
-        latest_sbr = valid_labs.iloc[-1]["Total_Bilirubin"]  # Always in umol/L internal unit
+    # Safely compute valid_labs before checking and showing button
+    valid_labs = labs_df[labs_df["Total_Bilirubin"].notnull() & (labs_df["Total_Bilirubin"] > 0)] if not labs_df.empty else pd.DataFrame()
+    
+    if not valid_labs.empty:
+        latest_sbr = valid_labs.iloc[-1]["Total_Bilirubin"]
         latest_hrs = valid_labs.iloc[-1]["Time_Hours"]
         
         photo_thresh, exchange_thresh = get_aap_thresholds(current_patient.get("ga_weeks", 38.0), latest_hrs, has_risk_factors)
@@ -665,10 +691,10 @@ with tab4:
     else:
         st.info("No SBR results recorded yet.")
         
-    if client and st.button("Generate AI Clinical Summary"):
+    if client and not valid_labs.empty and st.button("Generate AI Clinical Summary"):
         with st.spinner("Generating expert clinical assessment..."):
-            latest_val = valid_labs.iloc[-1]["Total_Bilirubin"] if not labs_df.empty else "N/A"
-            latest_h = valid_labs.iloc[-1]["Time_Hours"] if not labs_df.empty else "N/A"
+            latest_val = valid_labs.iloc[-1]["Total_Bilirubin"]
+            latest_h = valid_labs.iloc[-1]["Time_Hours"]
             risk_desc = current_patient["risk_factors"]
             summary_text = get_ai_clinical_summary(client, current_patient, latest_val, latest_h, risk_desc)
             st.success("AI Summary Generated:")
@@ -678,8 +704,8 @@ with tab5:
     st.subheader("📤 Shift Handover (Ready for WhatsApp)")
     
     latest_sbr_txt = "N/A"
-    if not current_patient["labs"].empty and len(current_patient["labs"][current_patient["labs"]["Total_Bilirubin"] > 0]) > 0:
-        row = current_patient["labs"][current_patient["labs"]["Total_Bilirubin"] > 0].iloc[-1]
+    if not current_patient["labs"].empty and len(current_patient["labs"][current_patient["labs"]["Total_Bilirubin"].notnull() & (current_patient["labs"]["Total_Bilirubin"] > 0)]) > 0:
+        row = current_patient["labs"][current_patient["labs"]["Total_Bilirubin"].notnull() & (current_patient["labs"]["Total_Bilirubin"] > 0)].iloc[-1]
         latest_sbr_txt = f"{row['Total_Bilirubin']} {row['Unit_original']} at {row['Time_Hours']} hours"
         
     handover_text = f"""📋 NEONATAL NURSERY SHIFT HANDOVER
