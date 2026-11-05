@@ -1,6 +1,6 @@
 streamlit>=1.38.0
 pandas>=2.0.0
 numpy>=1.24.0
-google-genai>=1.0.0
+google-generativeai>=0.3.0
 pillow>=9.0.0
 xlsxwriter>=3.0.0
