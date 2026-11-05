@@ -323,29 +323,40 @@ for p in db_patients:
         "labs": labs_df
     }
 
-# --- Main Page: Add New Newborn with AI Input Hub ---
+# --- Main Page: Add New Newborn with Selectbox Input Hub ---
 st.markdown("---")
 with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(patients_dict) == 0):
-    st.markdown("إدخال مولود جديد بالذكاء الاصطناعي (الكاميرا، رفع الصور، الميكروفون، أو الإدخال اليدوي):")
+    st.markdown("إدخال مولود جديد بالذكاء الاصطناعي أو يدوياً:")
     
     col_input1, col_input2 = st.columns(2)
     with col_input1:
         new_mrn = st.text_input("Baby MRN (رقم الملف الطبي)")
         new_name = st.text_input("Baby / Mother Name (اسم الطفل / الأم)")
     
-    input_method = st.radio("اختر طريقة إدخال البيانات:", ("Manual / Direct (يدوي)", "Open Camera (فتح الكاميرا)", "Upload Photo (رفع صورة الكريب كارد)", "Open Microphone (تسجيل صوتي)"))
+    # القائمة المنسدلة لاختيار طريقة الإدخال
+    input_method = st.selectbox(
+        "اختر طريقة إدخال البيانات:",
+        [
+            "Manual / Direct (إدخال يدوي)",
+            "Open Camera (فتح الكاميرا المباشرة)",
+            "Upload Photo (رفع صورة كريب كارد / تقرير)",
+            "Open Microphone (تسجيل صوتي)"
+        ]
+    )
     
     extracted_json = None
-    if input_method == "Open Camera (فتح الكاميرا)":
+    if input_method == "Open Camera (فتح الكاميرا المباشرة)":
         cam_file = st.camera_input("Take Crib Card / Document Photo")
         if cam_file and st.button("Extract Data with AI 🚀"):
             with st.spinner("جاري تحليل الصورة بالذكاء الاصطناعي..."):
                 extracted_json = extract_medical_data_with_gemini(image_bytes=cam_file.getvalue())
-    elif input_method == "Upload Photo (رفع صورة الكريب كارد)":
+                
+    elif input_method == "Upload Photo (رفع صورة كريب كارد / تقرير)":
         up_img_file = st.file_uploader("Upload Crib Card / Lab Report", type=["jpg", "jpeg", "png"])
         if up_img_file and st.button("Extract Data with AI 🚀"):
             with st.spinner("جاري قراءة الصورة..."):
                 extracted_json = extract_medical_data_with_gemini(image_bytes=up_img_file.getvalue())
+                
     elif input_method == "Open Microphone (تسجيل صوتي)":
         audio_file = st.audio_input("Record Patient Clinical Details")
         if audio_file and st.button("Extract Data via Voice AI 🚀"):
@@ -370,7 +381,7 @@ with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(
             st.success("تم حفظ المريض بنجاح!")
             st.rerun()
 
-    if input_method == "Manual / Direct (يدوي)" and st.button("Create Newborn Record"):
+    if input_method == "Manual / Direct (إدخال يدوي)" and st.button("Create Newborn Record"):
         if new_mrn:
             conn = get_db_connection()
             conn.execute(
@@ -384,27 +395,43 @@ with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(
 
 st.markdown("---")
 
-# --- Census Overview Table at Top ---
-st.subheader("📊 Nursery Census Overview")
+# --- Census Overview Table & Quick Selection Cards ---
+st.subheader("📊 Nursery Census Overview & Quick Patient Selection")
 conn = get_db_connection()
 census_df = pd.read_sql("SELECT mrn, baby_name, ga_weeks, birth_weight, status FROM patients", conn)
 conn.close()
+
 if not census_df.empty:
     st.dataframe(census_df, use_container_width=True)
+    
+    st.markdown("### 🗂️ Quick Select Patient (اضغط على اسم المريض للتعامل المباشر معه):")
+    cols = st.columns(min(len(patients_dict), 4))
+    for idx, (mrn_val, p_data) in enumerate(patients_dict.items()):
+        col_idx = idx % 4
+        with cols[col_idx]:
+            if st.button(f"👶 {p_data['baby_name']}\nMRN: {mrn_val}\n[{p_data['status']}]", key=f"btn_pat_{mrn_val}"):
+                st.session_state['active_mrn'] = mrn_val
 else:
-    st.info("لا توجد حالات مسجلة حالياً في الحضانة. استخدم خانة (Add New Newborn) أعلاه لإضافة أول مولود.")
+    st.info("لا توجد حالات مسجلة حالياً في الحضانة. استخدم خانة الإدخال أعلاه لإضافة أول مولود.")
+
+default_mrn = list(patients_dict.keys())[0] if patients_dict else None
+if 'active_mrn' not in st.session_state or st.session_state['active_mrn'] not in patients_dict:
+    st.session_state['active_mrn'] = default_mrn
+
+if not patients_dict:
     st.stop()
 
-# Patient Selection Sidebar
-st.sidebar.header("🏥 Active Patient Selection")
-patient_keys = list(patients_dict.keys())
 selected_mrn = st.sidebar.selectbox(
     "Select Active Patient:",
-    patient_keys,
+    list(patients_dict.keys()),
+    index=list(patients_dict.keys()).index(st.session_state['active_mrn']) if st.session_state['active_mrn'] in patients_dict else 0,
     format_func=lambda x: f"{patients_dict[x]['baby_name']} (MRN: {x}) [{patients_dict[x]['status']}]"
 )
-
+st.session_state['active_mrn'] = selected_mrn
 current_patient = patients_dict[selected_mrn]
+
+st.markdown("---")
+st.markdown(f"### 🩺 Active Patient Management: **{current_patient['baby_name']}** (MRN: {current_patient['mrn']})")
 
 # --- Main Interface Tabs ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -412,7 +439,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Bilirubin Trend & AAP Charts", 
     "🧪 Laboratory Results", 
     "💡 Clinical Assessment & Risk", 
-    "📤 Shift Handover (WhatsApp)"
+    "📤 Shift Handover (Print & WhatsApp)"
 ])
 
 with tab1:
@@ -586,7 +613,7 @@ with tab4:
             st.write(summary_text)
 
 with tab5:
-    st.subheader("📤 Shift Handover (Ready for WhatsApp)")
+    st.subheader("📤 Shift Handover (Printable & WhatsApp Report)")
     
     latest_sbr_txt = "N/A"
     if not current_patient["labs"].empty:
@@ -609,6 +636,14 @@ Management Plan:
 Next Labs Due:
 {current_patient['next_labs_due']}"""
 
-    st.text_area("Copy handover text:", handover_text, height=220)
-    wa_url = f"https://wa.me/?text={urllib.parse.quote(handover_text)}"
-    st.markdown(f"[📲 Send Handover via WhatsApp]({wa_url})", unsafe_allow_html=True)
+    st.markdown("### معاينة التقرير القابل للطباعة والإرسال:")
+    st.code(handover_text, language="text")
+    
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        if st.button("🖨️ طباعة التقرير (Print Report)"):
+            st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+            st.info("قم بالضغط على أمر الطباعة من المتصفح لحفظه كـ PDF أو طباعته.")
+    with col_p2:
+        wa_url = f"https://wa.me/?text={urllib.parse.quote(handover_text)}"
+        st.markdown(f"[📲 إرسال الهاند أوفر عبر الواتساب (Send via WhatsApp)]({wa_url})", unsafe_allow_html=True)
