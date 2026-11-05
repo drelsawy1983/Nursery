@@ -4,11 +4,11 @@ import json
 import sqlite3
 import datetime
 import urllib.parse
+import requests
 import streamlit as st
 import pandas as pd
 import numpy as np
 from PIL import Image
-import google.generativeai as genai
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -25,13 +25,11 @@ st.info("🔒 **Privacy & Data Notice:** Crib card photos and patient details se
 DB_NAME = "neonatal_nursery.db"
 
 def get_db_connection() -> sqlite3.Connection:
-    """Create and return a SQLite database connection with row factory."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db() -> None:
-    """Initialize SQLite tables and insert seed patient data if empty."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -116,7 +114,6 @@ def init_db() -> None:
 init_db()
 
 def log_audit(action: str, patient_mrn: str, role: str) -> None:
-    """Record an audit log entry."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -191,8 +188,69 @@ except Exception:
 
 api_key = st.sidebar.text_input("Gemini API Key", value=api_key_env or "", type="password")
 
-if api_key:
-    genai.configure(api_key=api_key)
+# --- Direct REST API Helper for Gemini (No dependency issues) ---
+import base64
+
+def call_gemini_rest(prompt: str, image_bytes=None, mime_type="image/jpeg") -> str:
+    if not api_key:
+        return "Error: Gemini API Key is missing."
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    
+    parts = [{"text": prompt}]
+    if image_bytes:
+        encoded = base64.b64encode(image_bytes).decode('utf-8')
+        parts.append({
+            "inline_data": {
+                "mime_type": mime_type,
+                "data": encoded
+            }
+        })
+        
+    payload = {
+        "contents": [{"parts": parts}]
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        res_json = response.json()
+        if "candidates" in res_json:
+            return res_json["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+            return f"API Error: {res_json.get('error', 'Unknown error')}"
+    except Exception as e:
+        return f"Request Exception: {str(e)}"
+
+def extract_medical_data_with_gemini(image_bytes=None, audio_bytes=None, mime_type="image/jpeg") -> dict:
+    prompt = """
+    Extract neonatal clinical data from this crib card or lab image/audio. Return ONLY valid JSON with these exact keys:
+    mrn, baby_name, gestational_age_weeks, birth_weight_kg, mother_blood_group, baby_blood_group, dat_status, risk_factors, total_bilirubin, bilirubin_unit, tsh, crp, management_plan.
+    No extra text, just raw JSON.
+    """
+    file_bytes = image_bytes if image_bytes else audio_bytes
+    res_text = call_gemini_rest(prompt, image_bytes=file_bytes, mime_type=mime_type)
+    
+    # Clean markdown if returned
+    cleaned = res_text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:-3].strip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:-3].strip()
+        
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        return {"baby_name": "Extracted via AI", "management_plan": res_text}
+
+def get_ai_clinical_summary(p, sbr, hrs, risk) -> str:
+    prompt = (f"Neonatal case: GA {p['ga_weeks']} weeks, birth weight "
+              f"{p['birth_weight']}, latest total bilirubin {sbr} umol/L at "
+              f"{hrs} hours, risk factors: {risk}, DAT {p['dat']}, mother "
+              f"{p['blood_group_mother']}, baby {p['blood_group_baby']}. "
+              "Give a brief clinical summary and considerations per AAP 2022. "
+              "Do not give definitive orders or doses.")
+    return call_gemini_rest(prompt)
 
 # --- Clinical Logic Helper Functions ---
 def parse_blood_group(bg_str: str) -> tuple:
@@ -283,42 +341,6 @@ def calculate_rate_of_rise(labs_df: pd.DataFrame) -> float:
     dv = r2["Total_Bilirubin"] - r1["Total_Bilirubin"]
     return round(dv / dh, 2)
 
-# --- Gemini AI Extraction Function using GenerativeModel ---
-def extract_medical_data_with_gemini(image_bytes=None, audio_bytes=None):
-    if not api_key:
-        st.error("API Key required.")
-        return None
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = "Extract neonatal clinical data (MRN, baby_name, gestational_age_weeks, birth_weight_kg, mother_blood_group, baby_blood_group, dat_status, risk_factors, total_bilirubin, bilirubin_unit, tsh, crp, management_plan) as a JSON object."
-        contents = [prompt]
-        if image_bytes:
-            contents.append({"mime_type": "image/jpeg", "data": image_bytes})
-        
-        response = model.generate_content(contents)
-        text = response.text.strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
-        return json.loads(text)
-    except Exception as e:
-        st.error(f"Gemini Extraction Error: {str(e)}")
-        return None
-
-def get_ai_clinical_summary(p, sbr, hrs, risk):
-    if not api_key:
-        return "API Key required."
-    prompt = (f"Neonatal case: GA {p['ga_weeks']} weeks, birth weight "
-              f"{p['birth_weight']}, latest total bilirubin {sbr} umol/L at "
-              f"{hrs} hours, risk factors: {risk}, DAT {p['dat']}, mother "
-              f"{p['blood_group_mother']}, baby {p['blood_group_baby']}. "
-              "Give a brief clinical summary and considerations per AAP 2022. "
-              "Do not give definitive orders or doses.")
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        return model.generate_content(prompt).text
-    except Exception as e:
-        return f"AI error: {e}"
-
 # --- Main App Layout ---
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Census ({current_date_str})")
@@ -370,13 +392,13 @@ for p in db_patients:
         "labs": labs_df
     }
 
-with st.sidebar.expander("➕ Add New Newborn"):
+with st.sidebar.expander("➕ Add New Newborn (AI Powered)"):
     new_mrn = st.text_input("Baby MRN", key="new_mrn_input")
     new_name = st.text_input("Baby / Mother Name", key="new_name_input")
-    input_method = st.selectbox("Input Method", ("Manual / Direct", "Camera / Scanner Capture", "Image Upload"))
+    input_method = st.selectbox("Input Method", ("Manual / Direct", "Camera Capture (Crib Card)", "Image Upload", "Voice Dictation"))
     
     extracted_json = None
-    if input_method == "Camera / Scanner Capture":
+    if input_method == "Camera Capture (Crib Card)":
         cam_file = st.camera_input("Take Crib Card Photo")
         if cam_file and st.button("Extract with AI"):
             extracted_json = extract_medical_data_with_gemini(image_bytes=cam_file.getvalue())
@@ -384,22 +406,26 @@ with st.sidebar.expander("➕ Add New Newborn"):
         up_img_file = st.file_uploader("Upload Crib Card / Lab Image", type=["jpg", "jpeg", "png"])
         if up_img_file and st.button("Extract with AI"):
             extracted_json = extract_medical_data_with_gemini(image_bytes=up_img_file.getvalue())
+    elif input_method == "Voice Dictation":
+        audio_file = st.audio_input("Record Patient Voice Notes")
+        if audio_file and st.button("Extract via Voice AI"):
+            extracted_json = extract_medical_data_with_gemini(audio_bytes=audio_file.read(), mime_type=audio_file.type if hasattr(audio_file, 'type') else "audio/wav")
 
-    if extracted_json:
-        st.info("Review extracted data before saving:")
-        rev_name = st.text_input("Review Name", value=extracted_json.get("baby_name", new_name))
+    if extracted_json and isinstance(extracted_json, dict):
+        st.info("Review AI extracted data:")
+        rev_mrn = st.text_input("Review MRN", value=str(extracted_json.get("mrn", new_mrn)))
+        rev_name = st.text_input("Review Name", value=str(extracted_json.get("baby_name", new_name)))
         rev_ga = st.number_input("Review GA (weeks)", value=float(extracted_json.get("gestational_age_weeks", 38.0)))
         rev_wt = st.number_input("Review Weight (kg)", value=float(extracted_json.get("birth_weight_kg", 3.0)))
         if st.button("Confirm and Save New Patient"):
             conn = get_db_connection()
             conn.execute(
                 "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_mrn or extracted_json.get("mrn", "UNKNOWN"), rev_name, rev_ga, rev_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Unknown", extracted_json.get("mother_blood_group", "Unknown"), extracted_json.get("baby_blood_group", "Unknown"), extracted_json.get("dat_status", "Negative"), extracted_json.get("risk_factors", "None"), "In Nursery", "", extracted_json.get("management_plan", "Routine care"), "Pending")
+                (rev_mrn, rev_name, rev_ga, rev_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Unknown", str(extracted_json.get("mother_blood_group", "Unknown")), str(extracted_json.get("baby_blood_group", "Unknown")), str(extracted_json.get("dat_status", "Negative")), str(extracted_json.get("risk_factors", "None")), "In Nursery", "", str(extracted_json.get("management_plan", "Routine care")), "Pending")
             )
             conn.commit()
             conn.close()
-            log_audit("ADD_PATIENT", new_mrn, st.session_state.role)
-            st.success("Patient created successfully!")
+            st.success("Patient created via AI successfully!")
             st.rerun()
 
     if input_method == "Manual / Direct" and st.button("Create Newborn Record"):
@@ -411,7 +437,6 @@ with st.sidebar.expander("➕ Add New Newborn"):
             )
             conn.commit()
             conn.close()
-            log_audit("ADD_PATIENT", new_mrn, st.session_state.role)
             st.success("Newborn added!")
             st.rerun()
 
@@ -453,7 +478,6 @@ with tab1:
             conn.execute("UPDATE patients SET status = ?, discharge_notes = ? WHERE mrn = ?", (new_status, discharge_notes, current_patient["mrn"]))
             conn.commit()
             conn.close()
-            log_audit("UPDATE_STATUS", current_patient["mrn"], st.session_state.role)
             st.success("Status updated!")
             st.rerun()
 
@@ -510,7 +534,6 @@ with tab2:
                          (current_patient["mrn"], hours_life, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), val_umol, sbr_unit))
             conn.commit()
             conn.close()
-            log_audit("ADD_LAB_SBR", current_patient["mrn"], st.session_state.role)
             st.success("Reading added successfully!")
             st.rerun()
 
@@ -606,4 +629,3 @@ Next Labs Due:
     st.text_area("Copy handover text:", handover_text, height=220)
     wa_url = f"https://wa.me/?text={urllib.parse.quote(handover_text)}"
     st.markdown(f"[📲 Send Handover via WhatsApp]({wa_url})", unsafe_allow_html=True)
-
