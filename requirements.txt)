@@ -5,4 +5,4 @@ matplotlib>=3.7.0
 plotly>=5.14.0
 google-genai>=1.0.0
 pillow>=9.0.0
-audio-recorder-streamlit>=1.2.1
+xlsxwriter>=3.0.0
