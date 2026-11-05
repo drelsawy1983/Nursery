@@ -89,23 +89,23 @@ if api_key:
     if "patients_db" not in st.session_state:
         st.session_state.patients_db = {
             "177000000808": {
-                "baby_name": "Son of Rasmiah Obaid Alotaibi[span_0](start_span)[span_0](end_span)",
-                "mrn": "177000000808[span_1](start_span)[span_1](end_span)",
-                "gestational_age": "35 weeks + 3 days[span_2](start_span)[span_2](end_span)",
+                "baby_name": "Son of Rasmiah Obaid Alotaibi",
+                "mrn": "177000000808",
+                "gestational_age": "35 weeks + 3 days",
                 "ga_weeks": 35.43,
-                "birth_weight": "2.005 kg[span_3](start_span)[span_3](end_span)",
-                "birth_date": "30/10/2026 19:20H[span_4](start_span)[span_4](end_span)",
-                "gender": "Male[span_5](start_span)[span_5](end_span)",
+                "birth_weight": "2.005 kg",
+                "birth_date": "30/10/2026 19:20H",
+                "gender": "Male",
                 "blood_group_baby": "O Pos",
-                "blood_group_mother": "A POS[span_6](start_span)[span_6](end_span)",
-                "dat": "Negative[span_7](start_span)[span_7](end_span)",
-                "risk_factors": "Preterm (<38w), PPROM[span_8](start_span)[span_8](end_span)",
+                "blood_group_mother": "A POS",
+                "dat": "Negative",
+                "risk_factors": "Preterm (<38w), PPROM",
                 "status": "In Nursery",
                 "discharge_notes": "",
                 "management_plan": "Follow-up SBR q12h, continue routine phototherapy, monitor vitals.",
                 "next_labs_due": "SBR & TSH in 12 hours",
                 "labs": pd.DataFrame([
-                    {"Time_Hours": 53, "Date_Time": "01/11/2026 05:00H[span_9](start_span)[span_9](end_span)", "Total_Bilirubin": 144.8, "Unit": "umol/L", "TSH": 14.87, "CRP": 1.9, "Status": "Follow-up[span_10](start_span)[span_10](end_span)}
+                    {"Time_Hours": 53, "Date_Time": "01/11/2026 05:00H", "Total_Bilirubin": 144.8, "Unit": "umol/L", "TSH": 14.87, "CRP": 1.9, "Status": "Follow-up"}
                 ])
             }
         }
@@ -345,4 +345,3 @@ if api_key:
 
 else:
     st.info("👈 Please enter your Gemini API Key in the sidebar to start.")
-
