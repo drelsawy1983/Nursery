@@ -10,14 +10,14 @@ import numpy as np
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Sabry Vision - Neonatal Nursery System (Manual & Cumulative Labs)",
+    page_title="Sabry Vision - Neonatal Nursery System (Custom References & Cumulative Labs)",
     page_icon="👶",
     layout="wide"
 )
 
 # --- Permanent Medical Disclaimer & Privacy Notice ---
 st.warning("⚠️ **MEDICAL DISCLAIMER:** Decision-support tool only. Verify all calculations and decisions against the official AAP 2022 nomogram (Kemper et al., Pediatrics) and the treating physician's clinical judgment.")
-st.info("🔒 **Privacy & Data Notice:** Patient details and laboratory records are securely stored locally. Ensure compliance with your hospital's data privacy policies.")
+st.info("🔒 **Privacy & Data Notice:** Patient details, custom references, and laboratory records are securely stored locally.")
 
 # --- Database & Persistence Setup (SQLite) ---
 DB_NAME = "neonatal_nursery.db"
@@ -64,10 +64,47 @@ def init_db() -> None:
             FOREIGN KEY (mrn) REFERENCES patients (mrn)
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS custom_references (
+            test_name TEXT PRIMARY KEY,
+            min_val REAL,
+            max_val REAL,
+            unit TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
 init_db()
+
+# --- Custom References Management in Sidebar ---
+with st.sidebar:
+    st.markdown("### ⚙️ Hospital Reference Ranges")
+    st.markdown("قم بتعديل أو إدخال المعدلات الطبيعية المعتمدة في مستشفياتكم:")
+    
+    with st.expander("🛠️ Edit Lab References"):
+        ref_test = st.selectbox("Select Test to Configure", ["Calcium", "Creatinine", "SBR", "Cord TSH", "Baby TSH", "Hemoglobin", "Platelets", "Sodium", "Potassium"])
+        ref_min = st.number_input("Min Normal Value", value=2.1)
+        ref_max = st.number_input("Max Normal Value", value=2.6)
+        ref_unit = st.text_input("Unit", value="mmol/L")
+        
+        if st.button("Save Custom Reference"):
+            conn = get_db_connection()
+            conn.execute("INSERT OR REPLACE INTO custom_references (test_name, min_val, max_val, unit) VALUES (?, ?, ?, ?)",
+                         (ref_test, ref_min, ref_max, ref_unit))
+            conn.commit()
+            conn.close()
+            st.success(f"Reference for {ref_test} saved!")
+
+def get_reference(test_name: str) -> str:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT min_val, max_val, unit FROM custom_references WHERE test_name = ?", (test_name,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return f"{row['min_val']} - {row['max_val']} {row['unit']}"
+    return "Standard Neonatal Range"
 
 # --- Authentication & Role-Based Access Control ---
 def check_password():
@@ -79,16 +116,8 @@ def check_password():
         st.session_state.login_time = None
 
     if st.session_state.authenticated:
-        if st.session_state.role == "admin":
+        if st.session_state.role in ["admin", "user"]:
             return True
-        elif st.session_state.role == "user":
-            if st.session_state.login_time:
-                delta = datetime.datetime.now() - st.session_state.login_time
-                if delta.days <= 30:
-                    return True
-                else:
-                    st.warning("⚠️ User session expired (30 days limit). Please login again.")
-                    st.session_state.authenticated = False
 
     st.markdown("<h2 style='text-align: center;'>🔐 Login - Sabry Vision Neonatal System</h2>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -99,17 +128,11 @@ def check_password():
             submit_btn = st.form_submit_button("Login")
             
             if submit_btn:
-                if username == "admin" and password == "admin":
+                if (username == "admin" and password == "admin") or (username == "user" and password == "user"):
                     st.session_state.authenticated = True
-                    st.session_state.role = "admin"
+                    st.session_state.role = username
                     st.session_state.login_time = datetime.datetime.now()
-                    st.success("Logged in as Admin (Unlimited duration)")
-                    st.rerun()
-                elif username == "user" and password == "user":
-                    st.session_state.authenticated = True
-                    st.session_state.role = "user"
-                    st.session_state.login_time = datetime.datetime.now()
-                    st.success("Logged in as User (Valid for 30 days)")
+                    st.success("Logged in successfully!")
                     st.rerun()
                 else:
                     st.error("❌ Incorrect username or password.")
@@ -187,24 +210,9 @@ def get_aap_thresholds(ga_weeks: float, hours: float, has_risk: bool) -> tuple:
     exchange = base_exchange * factor * ga_factor
     return round(photo, 1), round(exchange, 1)
 
-def calculate_rate_of_rise(labs_df: pd.DataFrame) -> float:
-    if labs_df is None or labs_df.empty:
-        return 0.0
-    bili_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
-    if len(bili_df) < 2:
-        return 0.0
-    sorted_df = bili_df.sort_values("time_hours")
-    r1 = sorted_df.iloc[-2]
-    r2 = sorted_df.iloc[-1]
-    dh = r2["time_hours"] - r1["time_hours"]
-    if dh <= 0:
-        return 0.0
-    dv = r2["test_value"] - r1["test_value"]
-    return round(dv / dh, 2)
-
 # --- Main App Layout ---
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
-st.title(f"👶 Sabry Vision - Neonatal Nursery Census (Manual & Cumulative Labs) [{current_date_str}]")
+st.title(f"👶 Sabry Vision - Neonatal Nursery Census [{current_date_str}]")
 
 # Fetch patients from DB
 conn = get_db_connection()
@@ -219,8 +227,8 @@ for p in db_patients:
     labs_df = pd.read_sql("SELECT * FROM labs WHERE mrn = ? ORDER BY time_hours ASC", conn, params=(p["mrn"],))
     conn.close()
     
-    ga_w = p["ga_weeks"] if p["ga_weeks"] is not None else 38
-    ga_d = p["ga_days"] if p["ga_days"] is not None else 0
+    ga_w = p["ga_weeks"] if p["ga_weeks"] is not None else 35
+    ga_d = p["ga_days"] if p["ga_days"] is not None else 3
     
     patients_dict[p["mrn"]] = {
         "baby_name": p["baby_name"],
@@ -249,25 +257,24 @@ for p in db_patients:
 # --- Main Page: Add New Newborn (Manual Entry Hub) ---
 st.markdown("---")
 with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(patients_dict) == 0):
-    st.markdown("إدخال بيانات مولود جديد يدوياً بالكامل مع قوائم الاختيار المنسدلة وإمكانية التعديل الحر:")
+    st.markdown("إدخال بيانات مولود جديد يدوياً بالكامل:")
     
     col_input1, col_input2 = st.columns(2)
     with col_input1:
-        new_mrn = st.text_input("Baby MRN (رقم الملف الطبي)")
-        new_name = st.text_input("Patient Full Name (اسم الطفل / الأم)")
-        gender_val = st.selectbox("Gender (النوع)", ["Male", "Female"])
+        new_mrn = st.text_input("Baby MRN", value="177000000808")
+        new_name = st.text_input("Patient Full Name", value="SON OF RASMIAH OBAID ALOTAIBI")
+        gender_val = st.selectbox("Gender", ["Male", "Female"], index=0)
         
         st.markdown("Gestational Age (عمر الحمل)")
         col_ga1, col_ga2 = st.columns(2)
         with col_ga1:
-            new_ga_w = st.number_input("Weeks (أسابيع)", min_value=24, max_value=44, value=35)
+            new_ga_w = st.number_input("Weeks", min_value=24, max_value=44, value=35)
         with col_ga2:
-            new_ga_d = st.number_input("Days (أيام)", min_value=0, max_value=6, value=3)
+            new_ga_d = st.number_input("Days", min_value=0, max_value=6, value=3)
             
     with col_input2:
         new_wt = st.number_input("Birth Weight (kg)", value=2.005)
         
-        # Treating Consultant Dropdown with Custom Input Option
         consultant_options = [
             "Dr. Amany",
             "Dr. Hosny",
@@ -275,16 +282,13 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
             "Dr. Mahmoud El-Naggar",
             "Dr. NEMER",
             "Dr. Al-Thubaiti",
-            "Other (إدخال يدوي آخر)"
+            "Other"
         ]
-        selected_cons = st.selectbox("Treating Consultant / Physician", consultant_options)
-        if selected_cons == "Other (إدخال يدوي آخر)":
-            new_physician = st.text_input("Enter Custom Consultant Name", value="Dr. ")
-        else:
-            new_physician = selected_cons
+        selected_cons = st.selectbox("Treating Consultant", consultant_options, index=2)
+        new_physician = st.text_input("Custom Consultant Name", value="DR IBRAHIM-0829") if selected_cons == "Other" else selected_cons
         
-        new_diagnosis = st.text_input("Diagnosis (افتراضي PPROM)", value="PPROM")
-        new_delivery = st.selectbox("Delivery Type (نوع الولادة)", ["SVD", "CS", "BBA"])
+        new_diagnosis = st.text_input("Diagnosis", value="PRETERM, SVD, AGA")
+        new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA"], index=0)
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
@@ -292,10 +296,10 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     with col_b2:
         baby_bg_val = st.selectbox("Baby Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0)
     with col_b3:
-        dat_val = st.selectbox("DAT Test", ["Negative", "Positive"])
+        dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0)
 
-    risk_input = st.text_input("Risk Factors (e.g. Preterm, PROM 63 hrs, etc.)", value="Preterm, PROM")
-    mgmt_plan = st.text_area("Management Plan / Medications", value="Cholecalciferol Vitamin D3 400 units oral Q24 hours for 30 days. Special formula milk Q2H.")
+    risk_input = st.text_input("Risk Factors", value="Preterm, PROM 63 hrs")
+    mgmt_plan = st.text_area("Management Plan / Medications", value="Cholecalciferol Vitamin D3 400 units oral Q24H for 30 days. Special formula milk Q2H.")
     next_labs = st.text_input("Next Labs Due", value="SBR Q12H")
 
     if st.button("Create Manual Newborn Record"):
@@ -303,7 +307,7 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
             conn = get_db_connection()
             conn.execute(
                 "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_mrn, new_name or "Newborn", new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, mother_bg_val, baby_bg_val, dat_val, risk_input, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery)
+                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, mother_bg_val, baby_bg_val, dat_val, risk_input, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery)
             )
             conn.commit()
             conn.close()
@@ -321,7 +325,7 @@ conn.close()
 if not census_df.empty:
     st.dataframe(census_df, use_container_width=True)
     
-    st.markdown("### 🗂️ Quick Select Patient (اضغط على اسم المريض للتعامل المباشر معه):")
+    st.markdown("### 🗂️ Quick Select Patient:")
     cols = st.columns(min(len(patients_dict), 4))
     for idx, (mrn_val, p_data) in enumerate(patients_dict.items()):
         col_idx = idx % 4
@@ -329,7 +333,7 @@ if not census_df.empty:
             if st.button(f"👶 {p_data['baby_name']}\nMRN: {mrn_val}\n[{p_data['status']}]", key=f"btn_pat_{mrn_val}"):
                 st.session_state['active_mrn'] = mrn_val
 else:
-    st.info("لا توجد حالات مسجلة حالياً في الحضانة. استخدم خانة الإدخال أعلاه لإضافة أول مولود.")
+    st.info("لا توجد حالات مسجلة حالياً.")
 
 default_mrn = list(patients_dict.keys())[0] if patients_dict else None
 if 'active_mrn' not in st.session_state or st.session_state['active_mrn'] not in patients_dict:
@@ -353,7 +357,7 @@ st.markdown(f"### 🩺 Active Patient Management: **{current_patient['baby_name'
 # --- Main Interface Tabs ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 Crib Card & Clinical Profile", 
-    "📈 Bilirubin Trend & AAP Charts", 
+    "📈 AAP Bilirubin Nomogram & Trend Chart", 
     "🧪 Cumulative Labs & Comparison", 
     "💡 Clinical Assessment & Risk", 
     "📤 Shift Handover (Print & WhatsApp)"
@@ -414,7 +418,7 @@ with tab1:
     st.warning(f"⏰ **Next Labs Due:**\n\n{current_patient['next_labs_due']}")
 
 with tab2:
-    st.subheader("📈 Bilirubin Trend & AAP 2022 Guidelines Charts")
+    st.subheader("📈 AAP 2022 Bilirubin Nomogram & Multi-GA Curves Chart")
     
     mom_bg = current_patient["blood_group_mother"]
     baby_bg = current_patient["blood_group_baby"]
@@ -424,69 +428,73 @@ with tab2:
     has_risk_factors = (current_patient.get("ga_weeks", 38.0) < 38.0) or is_abo or is_rh or is_dat
     
     st.markdown(f"""
-    **Automated Risk Evaluation (AAP 2022):**
-    * **DAT Status:** {dat_res} ➔ {'⚠️ POSITIVE (Risk)' if is_dat else 'Negative'}
-    * **ABO Incompatibility:** {'⚠️ Detected (Mother O, Baby A/B/AB)' if is_abo else 'None'}
-    * **Rh Incompatibility:** {'⚠️ Detected (Mother Rh-, Baby Rh+)' if is_rh else 'None'}
-    * **Overall AAP Risk Category:** **{'WITH RISK FACTORS' if has_risk_factors else 'WITHOUT RISK FACTORS'}**
+    **AAP 2022 Risk Stratification:**
+    * **Risk Status:** **{'WITH RISK FACTORS (GA < 38w or Incompatibility/DAT+)' if has_risk_factors else 'WITHOUT RISK FACTORS'}**
     """)
 
     with st.expander("➕ Add New SBR Result Manually"):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]))
+            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=53.0)
         with col_b:
             sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=144.8)
         with col_c:
-            sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"])
+            sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"], index=0)
         
-        if st.button("Add SBR Reading & Plot Trend"):
+        if st.button("Add SBR Reading & Plot Nomogram"):
             val_umol = convert_to_umol(sbr_val, sbr_unit)
             conn = get_db_connection()
             conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
                          (current_patient["mrn"], hours_life, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", val_umol, "umol/L"))
             conn.commit()
             conn.close()
-            st.success("SBR Reading added and plotted successfully!")
+            st.success("SBR Reading added successfully!")
             st.rerun()
 
     labs_df = current_patient["labs"]
     if not labs_df.empty:
         bili_trend_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
         if not bili_trend_df.empty:
-            ror = calculate_rate_of_rise(labs_df)
-            if ror > 8.5:
-                st.error(f"⚠️ **Rapid Rate of Rise Warning:** Bilirubin is rising at {ror} µmol/L per hour!")
-            else:
-                st.info(f"📊 Current rate of rise: {ror} µmol/L per hour.")
+            st.markdown("### 📊 AAP Nomogram Curves & Patient Plot")
+            hours_arr = np.linspace(0, 168, 50)
+            chart_data_dict = {"Hours of Life": hours_arr}
+            
+            for ga_val in [35, 37, 40]:
+                p_line, _ = zip(*[get_aap_thresholds(ga_val, h, has_risk_factors) for h in hours_arr])
+                chart_data_dict[f"Phototherapy Threshold (GA {ga_val}w)"] = p_line
                 
-            chart_data = bili_trend_df.set_index("time_hours")[["test_value"]]
-            st.line_chart(chart_data)
+            plot_df = pd.DataFrame(chart_data_dict).set_index("Hours of Life")
+            st.line_chart(plot_df)
+            
+            st.markdown("### 🔵 Patient Bilirubin Trend Table")
+            st.dataframe(bili_trend_df, use_container_width=True)
         else:
-            st.info("No Bilirubin readings plotted yet.")
+            st.info("No Bilirubin readings recorded yet.")
 
 with tab3:
     st.subheader("🧪 Cumulative Laboratory Results & Trend Comparison")
-    st.markdown("إدخال التحاليل يدوياً مع جدول مقارنة تراكمي يوضح ما إذا كان التحليل قد ارتفع ($\uparrow$) أو انخفض ($\downarrow$) بين القراءات المختلفة:")
+    st.markdown("مقارنة النتائج جنب إلى جنب مع تواريخ العينات (مع الاعتماد على وحدات mmol/L المخصصة):")
     
     with st.expander("➕ Add Any Laboratory Test Manually"):
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
-            test_category = st.selectbox("Test Category", ["SBR (Bilirubin)", "CBC", "Renal Profile / Electrolytes", "Thyroid (TSH & T4)", "CRP / Other"])
+            test_category = st.selectbox("Test Category", ["SBR (Bilirubin)", "Calcium", "Creatinine", "CBC", "Thyroid (TSH)", "Electrolytes"])
         with col_t2:
             if test_category == "SBR (Bilirubin)":
                 custom_test_name = "SBR"
-            elif test_category == "Thyroid (TSH & T4)":
-                custom_test_name = st.selectbox("Select Test", ["Cord TSH", "Baby TSH", "Free T4", "Total T4"])
-            elif test_category == "Renal Profile / Electrolytes":
-                custom_test_name = st.selectbox("Select Test", ["Sodium (Na)", "Potassium (K)", "Chloride (Cl)", "Urea", "Creatinine", "Calcium (Ca)"])
-            elif test_category == "CBC":
-                custom_test_name = st.selectbox("Select Test", ["Hemoglobin (Hb)", "WBC", "Platelets", "Neutrophils"])
+            elif test_category == "Calcium":
+                custom_test_name = "Calcium"
+            elif test_category == "Creatinine":
+                custom_test_name = "Creatinine"
+            elif test_category == "Thyroid (TSH)":
+                custom_test_name = st.selectbox("Select Test", ["Cord TSH", "Baby TSH", "Free T4"])
+            elif test_category == "Electrolytes":
+                custom_test_name = st.selectbox("Select Test", ["Sodium (Na)", "Potassium (K)"])
             else:
-                custom_test_name = st.text_input("Enter Custom Lab Name (e.g. CRP, Albumin)")
+                custom_test_name = st.text_input("Enter Custom Lab Name", value="CRP")
         with col_t3:
-            test_val = st.number_input("Test Value", value=1.9)
-            test_unit = st.text_input("Unit (e.g. mg/L, mmol/L, umol/L)", value="mg/L")
+            test_val = st.number_input("Test Value (mmol/L or as per unit)", value=2.2)
+            test_unit = st.text_input("Unit", value="mmol/L")
 
         test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]))
 
@@ -496,17 +504,21 @@ with tab3:
                          (current_patient["mrn"], test_hours, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), custom_test_name, test_val, test_unit))
             conn.commit()
             conn.close()
-            st.success(f"Lab result ({custom_test_name}) saved successfully!")
+            st.success("Lab result saved successfully!")
             st.rerun()
             
     st.markdown("### 📋 Cumulative Lab Records & Comparison Table")
     raw_labs_df = current_patient["labs"]
     if not raw_labs_df.empty:
-        st.markdown("**1. Full Chronological Lab Log (سجل الفحوصات الكامل بالتفصيل):**")
-        st.dataframe(raw_labs_df, use_container_width=True)
+        st.markdown("**1. Full Chronological Lab Log (مع عرض مرجع المستشفى المعتمد):**")
+        
+        # إضافة عمود الـ Reference المخصص لكل تحليل
+        display_labs = raw_labs_df.copy()
+        display_labs["Hospital Reference Range"] = display_labs["test_name"].apply(lambda x: get_reference(x))
+        st.dataframe(display_labs, use_container_width=True)
         
         st.markdown("---")
-        st.markdown("**2. Cumulative Trend Comparison (مقارنة التغير بين القراءات لكل تحليل):**")
+        st.markdown("**2. Cumulative Trend Comparison (مقارنة التغير بين القراءات):**")
         
         unique_tests = raw_labs_df["test_name"].unique()
         for t_name in unique_tests:
@@ -519,11 +531,11 @@ with tab3:
                     if prev_val is None:
                         trend_status = "Baseline (أول قياس)"
                     elif curr_val > prev_val:
-                        trend_status = "📈 Increased (ارتفاع)"
+                        trend_status = "Increased (ارتفاع)"
                     elif curr_val < prev_val:
-                        trend_status = "📉 Decreased (انخفاض)"
+                        trend_status = "Decreased (انخفاض)"
                     else:
-                        trend_status = "➡️ Stable (ثابت)"
+                        trend_status = "Stable (ثابت)"
                         
                     comparison_rows.append({
                         "Hours of Life": row["time_hours"],
@@ -531,7 +543,8 @@ with tab3:
                         "Test Name": row["test_name"],
                         "Value": curr_val,
                         "Unit": row["unit"],
-                        "Trend / Comparison": trend_status
+                        "Reference Range": get_reference(row["test_name"]),
+                        "Trend Comparison": trend_status
                     })
                     prev_val = curr_val
                 
@@ -539,7 +552,7 @@ with tab3:
                 st.markdown(f"**🧪 Test: {t_name}**")
                 st.dataframe(comp_df, use_container_width=True)
     else:
-        st.info("لا توجد تحاليل مسجلة لهذا المريض بعد.")
+        st.info("لا توجد تحاليل مسجلة.")
 
 with tab4:
     st.subheader("💡 Clinical Zone Assessment & Recommendations")
@@ -551,7 +564,7 @@ with tab4:
         latest_sbr = bili_labs.iloc[-1]["test_value"]
         latest_hrs = bili_labs.iloc[-1]["time_hours"]
         
-        photo_thresh, exchange_thresh = get_aap_thresholds(current_patient.get("ga_weeks", 38.0), latest_hrs, has_risk_factors)
+        photo_thresh, exchange_thresh = get_aap_thresholds(current_patient.get("ga_weeks", 35.0), latest_hrs, has_risk_factors)
         
         zone_status = "Within Safe Zone / Below Phototherapy"
         if latest_sbr >= exchange_thresh:
