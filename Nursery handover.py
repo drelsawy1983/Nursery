@@ -14,45 +14,15 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Custom CSS for Professional Handover Tables & Print Isolation ---
+# --- Custom CSS for Professional Medical Form & Color Highlighting ---
 st.markdown("""
 <style>
 .metric-container { font-size: 11px !important; }
-.pink-warning { background-color: #ffe6f2; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
-
-@media print {
-    body * {
-        visibility: hidden;
-    }
-    #printable-handover-area, #printable-handover-area * {
-        visibility: visible;
-    }
-    #printable-handover-area {
-        position: absolute;
-        left: 0;
-        top: 0;
-        width: 100%;
-        background: white;
-    }
-}
-
-.handover-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 15px;
-    font-family: Arial, sans-serif;
-    font-size: 12px;
-    color: #000;
-}
-.handover-table th, .handover-table td {
-    border: 1px solid #333;
-    padding: 6px 8px;
-    text-align: left;
-}
-.handover-table th {
-    background-color: #f2f2f2;
-    font-weight: bold;
-}
+.pink-warning { background-color: #ffe6f2; padding: 3px 6px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
+.green-success { background-color: #e6ffed; padding: 3px 6px; border-radius: 4px; border: 1px solid #b3ffb3; color: #006622; font-weight: bold; display: inline-block; }
+.handover-container { border: 2px solid #333; padding: 20px; border-radius: 6px; background-color: #fff; color: #000; font-family: Arial, sans-serif; }
+.handover-section { font-weight: bold; background-color: #e6f2ff; color: #004080; padding: 8px; margin-top: 15px; border-left: 5px solid #004080; font-size: 14px; }
+.handover-item-title { font-weight: bold; color: #333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -167,18 +137,46 @@ def init_db() -> None:
             username TEXT PRIMARY KEY,
             password TEXT,
             role TEXT,
-            full_name TEXT,
-            national_id TEXT
+            full_name TEXT
         )
     ''')
-    cursor.execute("SELECT * FROM users WHERE username = 'admin'")
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
-                       ("admin", "admin", "admin", "System Administrator", "0000000000"))
+    # ضبط الحسابات الافتراضية المطلوبة بدقة
+    cursor.execute("INSERT OR REPLACE INTO users (username, password, role, full_name) VALUES (?, ?, ?, ?)", ("admin", "admin", "admin", "System Administrator"))
+    cursor.execute("INSERT OR REPLACE INTO users (username, password, role, full_name) VALUES (?, ?, ?, ?)", ("user", "user", "user", "Nursery Staff User"))
     conn.commit()
     conn.close()
 
 init_db()
+
+# --- Authentication System ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = ""
+if "role" not in st.session_state:
+    st.session_state.role = ""
+
+if not st.session_state.authenticated:
+    st.subheader("🔐 Sabry Vision - Login Portal")
+    login_user = st.text_input("Username (admin / user)", key="login_username")
+    login_pass = st.text_input("Password (admin / user)", type="password", key="login_password")
+    
+    if st.button("Login", key="login_btn"):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE username = ? AND password = ?", (login_user, login_pass))
+        user_row = cur.fetchone()
+        conn.close()
+        
+        if user_row:
+            st.session_state.authenticated = True
+            st.session_state.username = user_row["username"]
+            st.session_state.role = user_row["role"]
+            st.success("Login successful!")
+            st.rerun()
+        else:
+            st.error("Invalid username or password. Please use admin/admin or user/user.")
+    st.stop()
 
 # --- Mandatory Legal Disclaimer State ---
 if "consented" not in st.session_state:
@@ -231,6 +229,10 @@ def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_mi
 # --- Main App Layout ---
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Digital Logbook [{current_date_str}]")
+st.sidebar.markdown(f"👤 Logged in as: **{st.session_state.username}** ({st.session_state.role.upper()})")
+if st.sidebar.button("Logout"):
+    st.session_state.authenticated = False
+    st.rerun()
 
 mode_option = st.selectbox("🎛️ Select Operation Mode", ["Actual Nursery", "Demo Test Patient (Rich Data Version)"], key="main_mode_selectbox")
 
@@ -280,7 +282,7 @@ if "Demo" in mode_option:
     conn.commit()
     conn.close()
 
-# Fetch patients strictly based on mode (Actual Nursery excludes '000000', Demo includes only '000000')
+# Fetch patients strictly based on mode
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 if "Demo" in mode_option:
@@ -1007,151 +1009,99 @@ with tab6:
 with tab7:
     st.subheader("📤 Shift Handover (Professional Confidential Medical Form)")
     
-    anonymize_flag = st.checkbox("🔒 Anonymize Patient Identity", value=False, key="tab7_anon_checkbox")
+    # قائمة منسدلة On / Off للتحكم في إخفاء الهوية
+    anon_option = st.selectbox("🔒 Anonymize Patient Identity", ["Off", "On"], index=0, key="tab7_anon_select")
+    anonymize_flag = (anon_option == "On")
     
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
     
-    labs_rows = ""
-    if not current_patient["labs"].empty:
-        for idx, r in current_patient["labs"].iterrows():
-            labs_rows += f"<tr><td>{r['sample_datetime']} ({r['hours_elapsed']}h)</td><td>{r['test_name']}</td><td>{r['test_value']} {r['unit']}</td></tr>"
-    else:
-        labs_rows = "<tr><td colspan='3'>No labs recorded.</td></tr>"
+    # دوال تنسيق الألوان بناءً على الحالة (أخضر للطبيعي/الإيجابي السليم، وردي للخطورة، أبيض عادي للباقي)
+    def format_status_badge(val, is_abnormal_risk=False):
+        if not val or str(val).lower() in ["no", "pending", "none"]:
+            return f"{val}"
+        if is_abnormal_risk or any(w in str(val).upper() for w in ["POS", "POSITIVE", "FAIL", "GESTATIONAL DM", "PRE-EXISTING DM", "YES", "VARIABLE", "LATE"]):
+            return f'<span class="pink-warning">{val}</span>'
+        else:
+            return f'<span class="green-success">{val}</span>'
 
-    img_rows = ""
-    if not current_patient["imaging"].empty:
-        for idx, r in current_patient["imaging"].iterrows():
-            img_rows += f"<tr><td>{r['img_date']}</td><td>{r['img_type']} - {r['img_name']}</td><td>{r['img_result']}</td></tr>"
-    else:
-        img_rows = "<tr><td colspan='3'>No imaging or echo recorded.</td></tr>"
+    mother_bg_str = f"{current_patient['mother_abo']} {current_patient['mother_rh']}"
+    mother_bg_html = f'<span class="pink-warning">{mother_bg_str}</span>' if ("O" in current_patient['mother_abo'] or "NEG" in current_patient['mother_rh']) else f'<span class="green-success">{mother_bg_str}</span>'
 
-    html_handover_report = f"""
-    <div id="printable-handover-area" style="background-color: #ffffff; padding: 20px; border: 2px solid #000; color: #000;">
-        <h3 style="text-align: center; margin-bottom: 5px;">NURSERY DEPARTMENT - SHIFT HANDOVER REPORT</h3>
-        <p style="text-align: center; font-size: 11px; margin-top: 0;">Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | Unit: NURSERY</p>
+    dat_str = current_patient['dat']
+    dat_html = f'<span class="pink-warning">{dat_str}</span>' if "POS" in dat_str.upper() else f'<span class="green-success">{dat_str}</span>'
+
+    prom_html = f'<span class="pink-warning">{current_patient["prom_status"]}</span>' if current_patient["prom_status"] == "Yes" else "No"
+    ab_html = f'<span class="pink-warning">{current_patient["antibiotic_status"]} - {current_patient["antibiotic_name"]}</span>' if current_patient["antibiotic_status"] == "Yes" else "No"
+    hvs_html = f'<span class="pink-warning">Yes ({current_patient["hvs_organism"]})</span>' if current_patient["hvs_status"] == "Yes" else "No"
+    gbs_html = f'<span class="pink-warning">Yes ({current_patient["gbs_site"]})</span>' if current_patient["gbs_status"] == "Yes" else "No"
+    hypo_html = f'<span class="pink-warning">{current_patient["hypothyroid_status"]}</span>' if current_patient["hypothyroid_status"] == "Yes" else "No"
+    dm_html = f'<span class="pink-warning">{current_patient["dm_status"]}</span>' if current_patient["dm_status"] != "No" else "No"
+
+    # تصميم تقرير الهاند أوفر بنظام الألوان المنسق والواضح
+    handover_markdown_view = f"""
+    <div class="handover-container">
+        <h3 align="center" style="color: #004080;">NURSERY DEPARTMENT - SHIFT HANDOVER REPORT</h3>
+        <p align="center"><b>Date:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | <b>Unit:</b> NURSERY</p>
         
-        <table class="handover-table">
-            <tr>
-                <th colspan="4" style="background-color: #e6e6e6;">1. IDENTIFICATION & SITUATION</th>
-            </tr>
-            <tr>
-                <td><b>Patient Name:</b> {p_name}</td>
-                <td><b>MRN:</b> {p_mrn}</td>
-                <td><b>Gender:</b> {current_patient['gender']}</td>
-                <td><b>Gestational Age:</b> {current_patient['gestational_age']}</td>
-            </tr>
-            <tr>
-                <td><b>Birth Weight:</b> {current_patient['birth_weight']}</td>
-                <td><b>Birth Date/Time:</b> {current_patient['birth_date']}</td>
-                <td><b>Patient Status:</b> {current_patient['status']}</td>
-                <td><b>Consultant:</b> {current_patient['primary_physician']}</td>
-            </tr>
-            <tr>
-                <td colspan="2"><b>Diagnosis & Delivery:</b> {current_patient['diagnosis']} ({current_patient['delivery_type']})</td>
-                <td colspan="2"><b>Blood Groups:</b> Mother [{current_patient['mother_abo']} {current_patient['mother_rh']}] | Baby [{current_patient['baby_abo']} {current_patient['baby_rh']}] | DAT: [{current_patient['dat']}]</td>
-            </tr>
-        </table>
+        <div class="handover-section">1. IDENTIFICATION & SITUATION</div>
+        - <span class="handover-item-title">Patient Name:</span> <u><b>{p_name}</b></u><br>
+        - <span class="handover-item-title">MRN:</span> <u><b>{p_mrn}</b></u><br>
+        - <span class="handover-item-title">Gender & GA:</span> {current_patient['gender']} | {current_patient['gestational_age']}<br>
+        - <span class="handover-item-title">Birth Weight & Time:</span> {current_patient['birth_weight']} | {current_patient['birth_date']}<br>
+        - <span class="handover-item-title">Status & Consultant:</span> {current_patient['status']} | <b>{current_patient['primary_physician']}</b><br>
+        - <span class="handover-item-title">Diagnosis & Delivery:</span> {current_patient['diagnosis']} ({current_patient['delivery_type']})<br>
+        - <span class="handover-item-title">Blood Groups & DAT:</span> Mother [{mother_bg_html}] | Baby [{current_patient['baby_abo']} {current_patient['baby_rh']}] | DAT: [{dat_html}]
 
-        <table class="handover-table">
-            <tr>
-                <th colspan="2" style="background-color: #e6e6e6;">2. BACKGROUND & MATERNAL HISTORY</th>
-            </tr>
-            <tr>
-                <td><b>Booking & Obstetric:</b></td>
-                <td>Gravida [{current_patient['gravida']}], Para [{current_patient['para']}], Abortion [{current_patient['abortion']}]</td>
-            </tr>
-            <tr>
-                <td><b>Obstetric History:</b></td>
-                <td>{current_patient['obs_history'] or 'None'}</td>
-            </tr>
-            <tr>
-                <td><b>Family History:</b></td>
-                <td>{current_patient['family_history'] or 'None'}</td>
-            </tr>
-            <tr>
-                <td><b>Risk Factors:</b></td>
-                <td>
-                    - PROM: {current_patient['prom_status']} ({current_patient['prom_hours']}h {current_patient['prom_mins']}m)<br>
-                    - Antibiotic: {current_patient['antibiotic_status']} - {current_patient['antibiotic_name']} ({current_patient['antibiotic_doses']} doses, {current_patient['antibiotic_treated']})<br>
-                    - Pethidine: {current_patient['pethidine_status']} ({current_patient['pethidine_details']})<br>
-                    - CTG: {current_patient['ctg_category']} - {current_patient['ctg_findings']}<br>
-                    - HVS: {current_patient['hvs_status']} ({current_patient['hvs_organism']}, {current_patient['hvs_treated']})<br>
-                    - GBS: {current_patient['gbs_status']} ({current_patient['gbs_site']}, {current_patient['gbs_treated']})<br>
-                    - Hypothyroidism: {current_patient['hypothyroid_status']} ({current_patient['thyroxine_status']}, {current_patient['thyroxine_dose']})<br>
-                    - Diabetes Mellitus: {current_patient['dm_status']} ({current_patient['dm_treatment']})<br>
-                    - Other Maternal Diseases: {current_patient['maternal_diseases'] or 'None'}
-                </td>
-            </tr>
-        </table>
+        <div class="handover-section">2. BACKGROUND & MATERNAL HISTORY</div>
+        - <span class="handover-item-title">Booking & Obstetric:</span> Gravida [{current_patient['gravida']}], Para [{current_patient['para']}], Abortion [{current_patient['abortion']}]<br>
+        - <span class="handover-item-title">Obstetric History:</span> {current_patient['obs_history'] or 'None'}<br>
+        - <span class="handover-item-title">Family History:</span> {current_patient['family_history'] or 'None'}<br>
+        - <span class="handover-item-title">Risk Factors & Screening:</span><br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>PROM:</b> {prom_html} ({current_patient['prom_hours']}h {current_patient['prom_mins']}m)<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Antibiotic:</b> {ab_html}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Pethidine:</b> {current_patient['pethidine_status']} ({current_patient['pethidine_details']})<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>CTG:</b> {current_patient['ctg_category']} - {current_patient['ctg_findings']}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>HVS Positive:</b> {hvs_html}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>GBS Positive:</b> {gbs_html}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Hypothyroidism:</b> {hypo_html}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Diabetes Mellitus:</b> {dm_html}<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Other Diseases:</b> {current_patient['maternal_diseases'] or 'None'}
 
-        <table class="handover-table">
-            <tr>
-                <th colspan="2" style="background-color: #e6e6e6;">3. ASSESSMENT, FEEDING & MEDICATIONS</th>
-            </tr>
-            <tr>
-                <td><b>Feeding Type:</b></td>
-                <td>{current_patient['feeding_type']}</td>
-            </tr>
-            <tr>
-                <td><b>Medications & Vaccines:</b></td>
-                <td>Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]</td>
-            </tr>
-            <tr>
-                <td><b>Screening Tests:</b></td>
-                <td>CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]</td>
-            </tr>
-            <tr>
-                <td><b>Management Plan:</b></td>
-                <td>{current_patient['management_plan']}</td>
-            </tr>
-        </table>
+        <div class="handover-section">3. ASSESSMENT, FEEDING & MEDICATIONS</div>
+        - <span class="handover-item-title">Feeding Type:</span> {current_patient['feeding_type']}<br>
+        - <span class="handover-item-title">Medications & Vaccines:</span> Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]<br>
+        - <span class="handover-item-title">Screening Tests:</span> CCHD [{format_status_badge(current_patient['cchd_status'])}] | Red Reflex [{format_status_badge(current_patient['red_reflex_status'])}] | Hearing [{format_status_badge(current_patient['hearing_status'])}]<br>
+        - <span class="handover-item-title">Management Plan:</span><br>
+          {current_patient['management_plan']}
 
-        <table class="handover-table">
-            <tr>
-                <th colspan="3" style="background-color: #e6e6e6;">4. CUMULATIVE LABORATORY RESULTS</th>
-            </tr>
-            <tr>
-                <th>Sample Time</th>
-                <th>Test Name</th>
-                <th>Result & Unit</th>
-            </tr>
-            {labs_rows}
-        </table>
-
-        <table class="handover-table">
-            <tr>
-                <th colspan="3" style="background-color: #e6e6e6;">5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY</th>
-            </tr>
-            <tr>
-                <td colspan="3"><b>Echocardiography Status:</b> {current_patient['echo_status'] or 'Not requested'}<br>
-                <b>Echo Result:</b> {current_patient['echo_result'] or 'N/A'} (Follow-up: {current_patient['echo_followup_months']} months)<br>
-                <b>Consultations:</b> {current_patient['consultation_type'] or 'None'}</td>
-            </tr>
-            <tr>
-                <th>Date</th>
-                <th>Imaging Type</th>
-                <th>Findings / Result</th>
-            </tr>
-            {img_rows}
-        </table>
-
-        <table class="handover-table">
-            <tr>
-                <th>6. NEXT LABS DUE</th>
-            </tr>
-            <tr>
-                <td>{current_patient['next_labs_due']}</td>
-            </tr>
-        </table>
-    </div>
+        <div class="handover-section">4. CUMULATIVE LABORATORY RESULTS</div>
     """
 
     st.markdown("### Report Preview (Professional Form Format):")
-    st.markdown(html_handover_report, unsafe_allow_html=True)
-    
+    st.markdown(handover_markdown_view, unsafe_allow_html=True)
+
+    if not current_patient["labs"].empty:
+        labs_display_df = current_patient["labs"][["sample_datetime", "hours_elapsed", "test_name", "test_value", "unit"]].copy()
+        labs_display_df.columns = ["Sample Time", "Hours", "Test Name", "Value", "Unit"]
+        st.dataframe(labs_display_df, use_container_width=True)
+    else:
+        st.info("No labs recorded.")
+
+    st.markdown('<div class="handover-section">5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY</div>', unsafe_allow_html=True)
+    st.markdown(f"- <span class=\"handover-item-title\">Echocardiography Status:</span> {current_patient['echo_status'] or 'Not requested'}<br>- <span class=\"handover-item-title\">Echo Result:</span> {current_patient['echo_result'] or 'N/A'} (Follow-up: {current_patient['echo_followup_months']} months)<br>- <span class=\"handover-item-title\">Consultations:</span> {current_patient['consultation_type'] or 'None'}", unsafe_allow_html=True)
+
+    if not current_patient["imaging"].empty:
+        img_display_df = current_patient["imaging"][["img_date", "img_type", "img_name", "img_result"]].copy()
+        img_display_df.columns = ["Date", "Type", "Name", "Findings"]
+        st.dataframe(img_display_df, use_container_width=True)
+    else:
+        st.info("No imaging or echo recorded.")
+
+    st.markdown('<div class="handover-section">6. NEXT LABS DUE</div>', unsafe_allow_html=True)
+    st.markdown(f"<b>{current_patient['next_labs_due']}</b>", unsafe_allow_html=True)
+
     st.markdown("---")
     if st.button("🖨️ Print Report / Save as PDF securely", key="tab7_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Click your browser or tablet print option and select 'Save as PDF' to securely save the formatted handover report.")
-
