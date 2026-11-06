@@ -14,11 +14,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Custom CSS for Compact Crib Card Text & Pink Warnings ---
+# --- Custom CSS for Compact Crib Card & Hospital Form Style ---
 st.markdown("""
 <style>
 .metric-container { font-size: 11px !important; }
 .pink-warning { background-color: #ffe6f2; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
+.handover-box { border: 2px solid #333; padding: 15px; border-radius: 5px; background-color: #fff; font-family: monospace; color: #000; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -129,14 +130,6 @@ def init_db() -> None:
         )
     ''')
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS custom_references (
-            test_name TEXT PRIMARY KEY,
-            min_val REAL,
-            max_val REAL,
-            unit TEXT
-        )
-    ''')
-    cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             password TEXT,
@@ -149,100 +142,10 @@ def init_db() -> None:
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
                        ("admin", "admin", "admin", "System Administrator", "0000000000"))
-    cursor.execute("SELECT * FROM users WHERE username = 'user'")
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
-                       ("user", "user", "user", "Nursery Staff User", "1111111111"))
     conn.commit()
     conn.close()
 
 init_db()
-
-# --- Legal Consent & Disclaimer State ---
-if "consented" not in st.session_state:
-    st.session_state.consented = False
-
-if not st.session_state.consented:
-    st.markdown("<h2 style='text-align: center; color: #cc0000;'>⚖️ LEGAL DISCLAIMER & TERMS OF USE</h2>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style='background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #ddd;'>
-    <p><b>By accessing and using the Sabry Vision Neonatal Nursery Logbook System, you acknowledge and agree that this software is strictly a digital logbook and handover tool for administrative and census tracking. The application designer, developer, and owner bear <u>ABSOLUTELY NO LIABILITY OR LEGAL RESPONSIBILITY</u> for any medical decisions, diagnostic errors, treatment outcomes, or data breaches resulting from the use of this system.</b></p>
-    <p><b>ALL RESPONSIBILITY RESTS SOLELY WITH THE USER.</b> The healthcare professional using this software is entirely responsible for verifying all clinical data, patient privacy compliance, treatment plans, and medical interventions. By clicking "I Agree", you waive any right to legal claims against the designer or owner of this application.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("I Agree & Enter System (أوافق وأدخل النظام)"):
-        st.session_state.consented = True
-        st.rerun()
-    st.stop()
-
-# --- Authentication & Role-Based Access Control ---
-def check_password():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "username" not in st.session_state:
-        st.session_state.username = None
-    if "role" not in st.session_state:
-        st.session_state.role = None
-
-    if st.session_state.authenticated:
-        return True
-
-    st.markdown("<h2 style='text-align: center;'>🔐 Login - Sabry Vision Neonatal Logbook</h2>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form("login_form"):
-            username_input = st.text_input("Username (admin / user)")
-            password_input = st.text_input("Password", type="password")
-            submit_btn = st.form_submit_button("Login")
-            
-            if submit_btn:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username_input, password_input))
-                user = cursor.fetchone()
-                conn.close()
-                
-                if user:
-                    st.session_state.authenticated = True
-                    st.session_state.username = user["username"]
-                    st.session_state.role = user["role"]
-                    st.success("Logged in successfully!")
-                    st.rerun()
-                else:
-                    st.error("❌ Incorrect username or password.")
-    return False
-
-if not check_password():
-    st.stop()
-
-with st.sidebar:
-    st.write(f"👤 User: **{st.session_state.username}** ({st.session_state.role.upper()})")
-    if st.button("Logout", key="sidebar_logout_btn"):
-        st.session_state.authenticated = False
-        st.session_state.username = None
-        st.session_state.role = None
-        st.rerun()
-    st.markdown("---")
-    
-    if st.session_state.role == "admin":
-        with st.expander("👑 Admin User Management"):
-            new_u = st.text_input("New Username", key="admin_new_u")
-            new_p = st.text_input("New Password", type="password", key="admin_new_p")
-            new_role = st.selectbox("Role", ["user", "admin"], key="admin_new_role")
-            new_name = st.text_input("Full Name", key="admin_new_name")
-            new_nid = st.text_input("National ID / Employee ID", key="admin_new_nid")
-            
-            if st.button("Create / Update User", key="admin_create_user_btn"):
-                if new_u and new_p:
-                    conn = get_db_connection()
-                    conn.execute("INSERT OR REPLACE INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
-                                 (new_u, new_p, new_role, new_name, new_nid))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"User {new_u} saved successfully!")
-                else:
-                    st.error("Please enter username and password.")
 
 # --- Helper Functions ---
 def convert_to_umol(val: float, unit: str) -> float:
@@ -272,23 +175,61 @@ def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_mi
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Digital Logbook [{current_date_str}]")
 
-mode_option = st.selectbox("🎛️ Select Operation Mode (اختر وضع التشغيل)", ["Actual Nursery (الحالات الفعلية)", "Demo Test Patient (الوضع الافتراضي للتجربة)"], key="main_mode_selectbox")
+mode_option = st.selectbox("🎛️ Select Operation Mode (اختر وضع التشغيل)", ["Actual Nursery (الحالات الفعلية)", "Demo Test Patient (النسخة الاختبارية الغنية بالبيانات)"], key="main_mode_selectbox")
 
+# Populate Demo Patient with rich test data if Demo mode is selected
 if "Demo" in mode_option:
     conn = get_db_connection()
     conn.execute(
         "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_abo, mother_rh, baby_abo, baby_rh, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type, prom_status, prom_hours, prom_mins, antibiotic_status, antibiotic_name, antibiotic_doses, antibiotic_treated, pethidine_status, pethidine_details, ctg_category, ctg_findings, hvs_status, hvs_organism, hvs_treated, gbs_status, gbs_site, gbs_treated, hypothyroid_status, thyroxine_status, thyroxine_dose, dm_status, dm_treatment, maternal_diseases, gravida, para, abortion, obs_history, family_history, echo_status, echo_result, echo_followup_months, consultation_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O", "POS", "A", "POS", "Positive", "Preterm", "Still in Nursery", "", "IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula", "Yes", 12, 30, "Yes", "Ampicillin", 4, "Treated", "Yes", "100mg IV once", "Category A", "Reassuring", "No", "", "", "No", "", "", "No", "No", "", "No", "No treatment", "None", 2, 1, 0, "Normal previous sibling", "No family history of genetic disorders", "Requested before discharge", "Normal PDA closed", 6, "Orthopedic consultation")
+        ("177000000808", "SON OF RASMIAH OBAID ALOTAIBI", 35, 3, 2.005, "2026-10-30 19:20:00", "Male", "O", "NEG", "A", "POS", "Positive", "Preterm, SVD, AGA, Episode of cyanosis", "Still in Nursery", "", "Cholecalciferol, Vit A, IV fluids Q24H", "SBR Q12H", "Dr. IBRAHIM-0829", "PRETERM, SVD, AGA", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Special Formula Milk Q2HR - SIMILAC 24KCAL / TOLERATED - 15 TO 20 ML", "Yes", 63, 0, "Yes", "Ampicillin", 9, "Treated", "Yes", "100mg IV", "Category C", "Variable decelerations", "Yes", "E. coli", "Treated", "Yes", "in urine", "Treated", "Yes", "On Thyroxin", "50 mcg daily", "Gestational DM", "insulin", "Hypothyroidism, GDM", 3, 2, 1, "Previous IUFD at 28 weeks", "No family history of genetic disorders", "Requested before discharge", "Normal PDA closed, mild PFO", 6, "Orthopedic consultation")
     )
+    conn.execute("DELETE FROM labs WHERE mrn = '177000000808'")
+    demo_labs = [
+        ("177000000808", "2026-10-31 10:00", 14.5, "SBR", 101.3, "umol/L"),
+        ("177000000808", "2026-10-31 22:00", 26.5, "SBR", 165.0, "umol/L"),
+        ("177000000808", "2026-11-01 15:00", 44.0, "SBR", 245.0, "umol/L"),
+        ("177000000808", "2026-10-31 12:00", 16.5, "CRP", 1.9, "mg/L"),
+        ("177000000808", "2026-11-01 09:00", 37.0, "CRP", 4.2, "mg/L"),
+        ("177000000808", "2026-10-31 12:00", 16.5, "Calcium", 2.1, "mmol/L"),
+        ("177000000808", "2026-11-01 09:00", 37.0, "Calcium", 1.9, "mmol/L"),
+        ("177000000808", "2026-11-02 08:00", 60.5, "Calcium", 2.3, "mmol/L"),
+        ("177000000808", "2026-10-31 12:00", 16.5, "Creatinine", 85.0, "umol/L"),
+        ("177000000808", "2026-11-01 09:00", 37.0, "Creatinine", 110.0, "umol/L"),
+        ("177000000808", "2026-11-02 08:00", 60.5, "Creatinine", 65.0, "umol/L"),
+        ("177000000808", "2026-10-31 12:00", 16.5, "TSH", 3.4, "mIU/L"),
+        ("177000000808", "2026-10-31 12:00", 16.5, "Blood Sugar", 3.8, "mmol/L")
+    ]
+    conn.executemany("INSERT INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", demo_labs)
+    
+    conn.execute("DELETE FROM imaging WHERE mrn = '177000000808'")
+    demo_imgs = [
+        ("177000000808", "Ultrasound", "Cranial Ultrasound", "Normal ventricular system, no ICH or periventricular leukomalacia.", "2026-10-31"),
+        ("177000000808", "Ultrasound", "Abdomen Ultrasound", "Normal liver, spleen, and kidneys. No hydronephrosis.", "2026-10-31"),
+        ("177000000808", "X-Ray", "Chest X-Ray", "Clear lung fields, normal cardiothoracic ratio.", "2026-10-30"),
+        ("177000000808", "X-Ray", "X-Ray Clavicles", "Intact bilateral clavicles with no fractures.", "2026-10-30")
+    ]
+    conn.executemany("INSERT INTO imaging (mrn, img_type, img_name, img_result, img_date) VALUES (?, ?, ?, ?, ?)", demo_imgs)
+
+    conn.execute("DELETE FROM rbs_logs WHERE mrn = '177000000808'")
+    demo_rbs = [
+        ("177000000808", 3.8, "2026-10-30 19:40"),
+        ("177000000808", 4.2, "2026-10-30 22:00"),
+        ("177000000808", 4.5, "2026-10-31 06:00"),
+        ("177000000808", 4.1, "2026-10-31 12:00")
+    ]
+    conn.executemany("INSERT INTO rbs_logs (mrn, rbs_val, rbs_time) VALUES (?, ?, ?)", demo_rbs)
+
     conn.commit()
     conn.close()
 
+# Fetch patients from DB based on mode
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 if "Demo" in mode_option:
-    patients_cursor.execute("SELECT * FROM patients WHERE mrn = '000000'")
+    patients_cursor.execute("SELECT * FROM patients WHERE mrn = '177000000808'")
 else:
-    patients_cursor.execute("SELECT * FROM patients WHERE mrn != '000000'")
+    patients_cursor.execute("SELECT * FROM patients WHERE mrn != '177000000808'")
 db_patients = patients_cursor.fetchall()
 conn.close()
 
@@ -570,7 +511,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📋 Crib Card & Profile", 
     "⚠️ Risk Factors & History",
     "📈 Bilirubin Log", 
-    "🧪 Cumulative Labs", 
+    "🧪 Cumulative Labs & Compare", 
     "📷 Ultrasound, X-Ray & Echo",
     "🩸 RBS Log",
     "📤 Shift Handover"
@@ -810,7 +751,7 @@ with tab3:
             st.info("No Bilirubin readings recorded yet.")
 
 with tab4:
-    st.subheader("🧪 Cumulative Laboratory Results & Comparison (التحاليل التراكمية)")
+    st.subheader("🧪 Cumulative Laboratory Results & Compare (التحاليل التراكمية ومقارنة التكرارات)")
     
     with st.expander("➕ Add Any Laboratory Test"):
         sample_date_gen = st.date_input("Sample Date (تاريخ سحب العينة)", value=datetime.date.today(), key="tab4_gen_date")
@@ -853,6 +794,42 @@ with tab4:
             conn.close()
             st.success(f"Lab result saved successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
+
+    # Compare repeated labs button feature
+    if st.button("📊 Compare Repeated Labs (مقارنة التحاليل المتكررة جنبًا إلى جنب)", key="compare_labs_btn"):
+        raw_labs_df = current_patient["labs"]
+        if not raw_labs_df.empty:
+            st.markdown("### 📈 Repeated Labs Comparison Report")
+            counts = raw_labs_df["test_name"].value_counts()
+            repeated_tests = counts[counts > 1].index.tolist()
+            if repeated_tests:
+                for t_name in repeated_tests:
+                    st.markdown(f"**🔬 Test: `{t_name}` (كرر {counts[t_name]} مرات)**")
+                    t_sub = raw_labs_df[raw_labs_df["test_name"] == t_name].sort_values("hours_elapsed")
+                    comparison_list = []
+                    prev_v = None
+                    for idx, r in t_sub.iterrows():
+                        curr_v = r["test_value"]
+                        if prev_v is None:
+                            trend = "Baseline"
+                        elif curr_v > prev_v:
+                            trend = "📈 Increased (ارتفاع)"
+                        elif curr_v < prev_v:
+                            trend = "📉 Decreased (انخفاض)"
+                        else:
+                            trend = "➡️ Stable (ثابت)"
+                        comparison_list.append({
+                            "Sample Time": r["sample_datetime"],
+                            "Hours of Life": f"{r['hours_elapsed']}h",
+                            "Value": f"{curr_v} {r['unit']}",
+                            "Trend vs Previous": trend
+                        })
+                        prev_v = curr_v
+                    st.dataframe(pd.DataFrame(comparison_list), use_container_width=True)
+            else:
+                st.info("لا توجد تحاليل مكررة بأكثر من قياس واحد حالياً.")
+        else:
+            st.info("لا توجد تحاليل مسجلة.")
             
     st.markdown("### 📋 Cumulative Lab Records & Delete Option")
     raw_labs_df = current_patient["labs"]
@@ -971,39 +948,83 @@ with tab6:
         st.info("لا توجد قراءات RBS مسجلة.")
 
 with tab7:
-    st.subheader("📤 Shift Handover (Secure Internal & Print)")
+    st.subheader("📤 Shift Handover (Confidential Medical Form)")
     
-    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية (Anonymize Patient Identity)", value=False, key="tab7_anon_checkbox")
+    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية تماماً (Anonymize Patient Identity)", value=False, key="tab7_anon_checkbox")
     
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
     
-    handover_text = f"""📋 NEONATAL NURSERY SHIFT HANDOVER LOG (INTERNAL)
-Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
-Patient: {p_name} (MRN: {p_mrn})
-Status: {current_patient['status']}
-GA: {current_patient['gestational_age']} | Weight: {current_patient['birth_weight']}
-Booking / Obstetric: Gravida [{current_patient['gravida']}], Para [{current_patient['para']}], Abortion [{current_patient['abortion']}]
-Obstetric History: {current_patient['obs_history']} | Family History: {current_patient['family_history']}
-Consultant: {current_patient['primary_physician']} | Delivery: {current_patient['delivery_type']}
-Diagnosis: {current_patient['diagnosis']}
-Mother BG: {current_patient['mother_abo']} {current_patient['mother_rh']} | Baby BG: {current_patient['baby_abo']} {current_patient['baby_rh']} | DAT: {current_patient['dat']}
-Feeding: {current_patient['feeding_type']}
-Risk Factors: PROM [{current_patient['prom_status']} {current_patient['prom_hours']}h {current_patient['prom_mins']}m], AB [{current_patient['antibiotic_status']} - {current_patient['antibiotic_name']}, {current_patient['antibiotic_doses']} doses], Pethidine [{current_patient['pethidine_status']}], CTG [{current_patient['ctg_category']} - {current_patient['ctg_findings']}], HVS [{current_patient['hvs_status']} - {current_patient['hvs_organism']}], GBS [{current_patient['gbs_status']} - {current_patient['gbs_site']}], Hypothyroid [{current_patient['hypothyroid_status']}], DM [{current_patient['dm_status']} - {current_patient['dm_treatment']}]
-Echocardiography: Status [{current_patient['echo_status']}], Result [{current_patient['echo_result']}], Follow-up [{current_patient['echo_followup_months']} months]
-Consultations: {current_patient['consultation_type']}
-Medications: Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]
-Screening: CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]
+    # Gather labs summary text
+    labs_summary = ""
+    if not current_patient["labs"].empty:
+        for idx, r in current_patient["labs"].iterrows():
+            labs_summary += f"- {r['test_name']}: {r['test_value']} {r['unit']} at {r['sample_datetime']} ({r['hours_elapsed']}h)\n"
+    else:
+        labs_summary = "No labs recorded."
 
-Management Plan:
+    # Gather imaging summary text
+    img_summary = ""
+    if not current_patient["imaging"].empty:
+        for idx, r in current_patient["imaging"].iterrows():
+            img_summary += f"- [{r['img_type']}] {r['img_name']} ({r['img_date']}): {r['img_result']}\n"
+    else:
+        img_summary = "No imaging recorded."
+
+    handover_text = f"""==================================================
+NURSERY DEPARTMENT - SHIFT HANDOVER REPORT
+==================================================
+Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | Unit: NURSERY
+
+[1. IDENTIFICATION & SITUATION]
+- Patient Full Name: {p_name}
+- MRN: {p_mrn}
+- Gender: {current_patient['gender']} | Gestational Age: {current_patient['gestational_age']}
+- Birth Weight: {current_patient['birth_weight']} | Birth Date/Time: {current_patient['birth_date']}
+- Patient Status: {current_patient['status']}
+- Diagnosis & Delivery: {current_patient['diagnosis']} ({current_patient['delivery_type']})
+- Treating Consultant: {current_patient['primary_physician']}
+
+[2. BACKGROUND & MATERNAL HISTORY]
+- Booking & Obstetric: Gravida {current_patient['gravida']}, Para {current_patient['para']}, Abortion {current_patient['abortion']}
+- Obstetric History: {current_patient['obs_history'] or 'None'}
+- Family History: {current_patient['family_history'] or 'None'}
+- Blood Groups: Mother [{current_patient['mother_abo']} {current_patient['mother_rh']}] | Baby [{current_patient['baby_abo']} {current_patient['baby_rh']}] | DAT: [{current_patient['dat']}]
+- Risk Factors:
+  * PROM: {current_patient['prom_status']} ({current_patient['prom_hours']}h {current_patient['prom_mins']}m)
+  * Antibiotic: {current_patient['antibiotic_status']} - {current_patient['antibiotic_name']} ({current_patient['antibiotic_doses']} doses, {current_patient['antibiotic_treated']})
+  * Pethidine: {current_patient['pethidine_status']} ({current_patient['pethidine_details']})
+  * CTG: {current_patient['ctg_category']} - {current_patient['ctg_findings']}
+  * HVS: {current_patient['hvs_status']} ({current_patient['hvs_organism']}, {current_patient['hvs_treated']})
+  * GBS: {current_patient['gbs_status']} ({current_patient['gbs_site']}, {current_patient['gbs_treated']})
+  * Hypothyroidism: {current_patient['hypothyroid_status']} ({current_patient['thyroxine_status']}, {current_patient['thyroxine_dose']})
+  * Diabetes Mellitus: {current_patient['dm_status']} ({current_patient['dm_treatment']})
+  * Other Diseases: {current_patient['maternal_diseases'] or 'None'}
+
+[3. ASSESSMENT, FEEDING & MEDICATIONS]
+- Feeding Type: {current_patient['feeding_type']}
+- Medications & Vaccines: Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]
+- Screening Tests: CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]
+- Management Plan / Medications:
 {current_patient['management_plan']}
 
-Next Labs Due:
-{current_patient['next_labs_due']}"""
+[4. LABORATORY RESULTS (CUMULATIVE)]
+{labs_summary}
 
-    st.markdown("### Report Preview (Secure Internal Review & Print):")
-    st.code(handover_text, language="text")
+[5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY]
+- Echocardiography Status: {current_patient['echo_status'] or 'Not requested'}
+- Echo Result: {current_patient['echo_result'] or 'N/A'} (Follow-up: {current_patient['echo_followup_months']} months)
+- Consultations: {current_patient['consultation_type'] or 'None'}
+- Other Imaging Reports:
+{img_summary}
+
+[6. NEXT LABS DUE]
+{current_patient['next_labs_due']}
+=================================================="""
+
+    st.markdown("### Report Preview (Confidential Format):")
+    st.markdown(f'<div class="handover-box"><pre>{handover_text}</pre></div>', unsafe_allow_html=True)
     
-    if st.button("🖨️ Print Report (Save as PDF securely)", key="tab7_print_btn"):
+    if st.button("🖨️ Print Report / Save as PDF securely", key="tab7_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
-        st.info("Use your browser's print dialog (Ctrl+P / Cmd+P) to print or save as PDF securely.")
+        st.info("اضغط على زر الطباعة في متصفحك أو تابلتك، ثم اختر 'Save as PDF' لحفظ التقرير كملف PDF بكل سهولة.")
