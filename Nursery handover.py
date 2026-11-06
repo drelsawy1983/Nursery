@@ -14,6 +14,14 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- Custom CSS for Compact Crib Card Text & Pink Warnings ---
+st.markdown("""
+<style>
+.metric-container { font-size: 11px !important; }
+.pink-warning { background-color: #ffe6f2; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
+</style>
+""", unsafe_allow_html=True)
+
 # --- Database & Persistence Setup (SQLite) ---
 DB_NAME = "neonatal_nursery.db"
 
@@ -34,8 +42,10 @@ def init_db() -> None:
             birth_weight REAL,
             birth_datetime TEXT,
             gender TEXT,
-            mother_bg TEXT,
-            baby_bg TEXT,
+            mother_abo TEXT,
+            mother_rh TEXT,
+            baby_abo TEXT,
+            baby_rh TEXT,
             dat TEXT,
             risk_factors TEXT,
             status TEXT,
@@ -51,7 +61,26 @@ def init_db() -> None:
             vit_k_status TEXT,
             hepb_status TEXT,
             rsv_status TEXT,
-            feeding_type TEXT
+            feeding_type TEXT,
+            prom_status TEXT,
+            prom_hours REAL,
+            prom_mins REAL,
+            antibiotic_status TEXT,
+            antibiotic_name TEXT,
+            antibiotic_doses INTEGER,
+            hvs_status TEXT,
+            hvs_organism TEXT,
+            hvs_treated TEXT,
+            gbs_status TEXT,
+            gbs_site TEXT,
+            hypothyroid_status TEXT,
+            thyroxine_status TEXT,
+            dm_status TEXT,
+            dm_treatment TEXT,
+            echo_status TEXT,
+            echo_result TEXT,
+            echo_followup_months INTEGER,
+            consultation_type TEXT
         )
     ''')
     cursor.execute('''
@@ -63,7 +92,27 @@ def init_db() -> None:
             test_name TEXT,
             test_value REAL,
             unit TEXT,
-            FOREIGN KEY (mrn) REFERENCES patients (mrn)
+            FOREIGN KEY (mrn) REFERENCES patients (mrn) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS imaging (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mrn TEXT,
+            img_type TEXT,
+            img_name TEXT,
+            img_result TEXT,
+            img_date TEXT,
+            FOREIGN KEY (mrn) REFERENCES patients (mrn) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rbs_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mrn TEXT,
+            rbs_val REAL,
+            rbs_time TEXT,
+            FOREIGN KEY (mrn) REFERENCES patients (mrn) ON DELETE CASCADE
         )
     ''')
     cursor.execute('''
@@ -83,7 +132,6 @@ def init_db() -> None:
             national_id TEXT
         )
     ''')
-    # Default admin & user accounts
     cursor.execute("SELECT * FROM users WHERE username = 'admin'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
@@ -164,7 +212,6 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     
-    # Admin User Management Panel in Sidebar
     if st.session_state.role == "admin":
         with st.expander("👑 Admin User Management"):
             new_u = st.text_input("New Username", key="admin_new_u")
@@ -212,21 +259,17 @@ def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_mi
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Digital Logbook [{current_date_str}]")
 
-# Mode Selector Dropdown in Main Interface
 mode_option = st.selectbox("🎛️ Select Operation Mode (اختر وضع التشغيل)", ["Actual Nursery (الحالات الفعلية)", "Demo Test Patient (الوضع الافتراضي للتجربة)"], key="main_mode_selectbox")
 
 if "Demo" in mode_option:
     conn = get_db_connection()
     conn.execute(
-        "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O POS", "A POS", "Positive", "Preterm, ABO Incompatibility", "Still in Nursery", "", "Phototherapy initiated, IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM, ABO INCOMPATIBILITY", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula")
+        "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_abo, mother_rh, baby_abo, baby_rh, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type, prom_status, prom_hours, prom_mins, antibiotic_status, antibiotic_name, antibiotic_doses, hvs_status, hvs_organism, hvs_treated, gbs_status, gbs_site, hypothyroid_status, thyroxine_status, dm_status, dm_treatment, echo_status, echo_result, echo_followup_months, consultation_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O", "POS", "A", "POS", "Positive", "Preterm", "Still in Nursery", "", "IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula", "Yes", 63, 0, "Yes", "Ampicillin", 4, "No", "", "", "No", "", "No", "No", "No", "No", "Requested before discharge", "Normal PDA closed", 6, "Orthopedic consultation")
     )
-    conn.execute("INSERT OR IGNORE INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", str(datetime.datetime.now()), 24.0, "CRP", 1.9, "mg/L"))
-    conn.execute("INSERT OR IGNORE INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", str(datetime.datetime.now()), 53.0, "SBR", 245.0, "umol/L"))
     conn.commit()
     conn.close()
 
-# Fetch patients from DB based on mode
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 if "Demo" in mode_option:
@@ -240,6 +283,8 @@ patients_dict = {}
 for p in db_patients:
     conn = get_db_connection()
     labs_df = pd.read_sql("SELECT * FROM labs WHERE mrn = ? ORDER BY hours_elapsed ASC", conn, params=(p["mrn"],))
+    img_df = pd.read_sql("SELECT * FROM imaging WHERE mrn = ?", conn, params=(p["mrn"],))
+    rbs_df = pd.read_sql("SELECT * FROM rbs_logs WHERE mrn = ?", conn, params=(p["mrn"],))
     conn.close()
     
     ga_w = p["ga_weeks"] if p["ga_weeks"] is not None else 38
@@ -248,16 +293,18 @@ for p in db_patients:
     patients_dict[p["mrn"]] = {
         "baby_name": p["baby_name"],
         "mrn": p["mrn"],
-        "gestational_age": f"{ga_w} Weeks + {ga_d} Days",
+        "gestational_age": f"{ga_w} W + {ga_d} D",
         "ga_weeks": ga_w,
         "ga_days": ga_d,
         "birth_weight": f"{p['birth_weight']} kg",
         "birth_weight_val": p["birth_weight"],
         "birth_date": p["birth_datetime"],
         "gender": p["gender"],
-        "blood_group_mother": p["mother_bg"],
-        "blood_group_baby": p["baby_bg"],
-        "dat": p["dat"],
+        "mother_abo": p["mother_abo"] if p["mother_abo"] else "O",
+        "mother_rh": p["mother_rh"] if p["mother_rh"] else "POS",
+        "baby_abo": p["baby_abo"] if p["baby_abo"] else "A",
+        "baby_rh": p["baby_rh"] if p["baby_rh"] else "POS",
+        "dat": p["dat"] if p["dat"] else "Negative",
         "risk_factors": p["risk_factors"],
         "status": p["status"],
         "discharge_notes": p["discharge_notes"],
@@ -273,7 +320,28 @@ for p in db_patients:
         "hepb_status": p["hepb_status"] if p["hepb_status"] else "Given",
         "rsv_status": p["rsv_status"] if p["rsv_status"] else "Not Given",
         "feeding_type": p["feeding_type"] if p["feeding_type"] else "Regular Formula",
-        "labs": labs_df
+        "prom_status": p["prom_status"] if p["prom_status"] else "No",
+        "prom_hours": p["prom_hours"] if p["prom_hours"] else 0,
+        "prom_mins": p["prom_mins"] if p["prom_mins"] else 0,
+        "antibiotic_status": p["antibiotic_status"] if p["antibiotic_status"] else "No",
+        "antibiotic_name": p["antibiotic_name"] if p["antibiotic_name"] else "",
+        "antibiotic_doses": p["antibiotic_doses"] if p["antibiotic_doses"] else 0,
+        "hvs_status": p["hvs_status"] if p["hvs_status"] else "No",
+        "hvs_organism": p["hvs_organism"] if p["hvs_organism"] else "",
+        "hvs_treated": p["hvs_treated"] if p["hvs_treated"] else "",
+        "gbs_status": p["gbs_status"] if p["gbs_status"] else "No",
+        "gbs_site": p["gbs_site"] if p["gbs_site"] else "",
+        "hypothyroid_status": p["hypothyroid_status"] if p["hypothyroid_status"] else "No",
+        "thyroxine_status": p["thyroxine_status"] if p["thyroxine_status"] else "No",
+        "dm_status": p["dm_status"] if p["dm_status"] else "No",
+        "dm_treatment": p["dm_treatment"] if p["dm_treatment"] else "No treatment",
+        "echo_status": p["echo_status"] if p["echo_status"] else "",
+        "echo_result": p["echo_result"] if p["echo_result"] else "",
+        "echo_followup_months": p["echo_followup_months"] if p["echo_followup_months"] else 0,
+        "consultation_type": p["consultation_type"] if p["consultation_type"] else "",
+        "labs": labs_df,
+        "imaging": img_df,
+        "rbs": rbs_df
     }
 
 # --- Main Page: Add New Newborn (Manual Entry Hub) ---
@@ -298,32 +366,88 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
         new_wt = st.number_input("Birth Weight (kg)", value=2.500, key="main_new_wt")
         
         consultant_options = [
-            "Dr. Amany",
-            "Dr. Hosny",
-            "Dr. Ibrahim BAHLAK",
-            "Dr. Mahmoud El-Naggar",
-            "Dr. NEMER",
-            "Dr. Al-Thubaiti",
-            "Other"
+            "Dr. Amany", "Dr. Hosny", "Dr. Ibrahim BAHLAK",
+            "Dr. Mahmoud El-Naggar", "Dr. NEMER", "Dr. Al-Thubaiti", "Other"
         ]
         selected_cons = st.selectbox("Treating Consultant", consultant_options, index=2, key="main_new_cons")
         new_physician = st.text_input("Custom Consultant Name", value="DR IBRAHIM-0829", key="main_new_cname") if selected_cons == "Other" else selected_cons
         
         new_diagnosis = st.text_input("Diagnosis", value="", key="main_new_diag")
-        new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA"], index=0, key="main_new_del")
+        new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA", "Ventouse Delivery", "CS with Assisted Forceps"], index=0, key="main_new_del")
 
-    col_b1, col_b2, col_b3 = st.columns(3)
+    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
     with col_b1:
-        mother_bg_val = st.selectbox("Mother Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0, key="main_mbg")
+        m_abo = st.selectbox("Mother ABO", ["A", "B", "AB", "O"], index=3, key="main_mabo")
     with col_b2:
-        baby_bg_val = st.selectbox("Baby Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0, key="main_bbg")
+        m_rh = st.selectbox("Mother Rh", ["POS", "NEG"], index=0, key="main_mrh")
     with col_b3:
-        dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0, key="main_dat")
+        b_abo = st.selectbox("Baby ABO", ["A", "B", "AB", "O"], index=0, key="main_babo")
+    with col_b4:
+        b_rh = st.selectbox("Baby Rh", ["POS", "NEG"], index=0, key="main_brh")
 
-    st.markdown("### 🍼 Feeding Type (نوع التغذية)")
+    dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0, key="main_dat")
+
+    st.markdown("---")
+    st.markdown("### ⚠️ Risk Factors & Maternal History (عوامل الخطر والتاريخ المرضي)")
+    
+    col_rf1, col_rf2 = st.columns(2)
+    with col_rf1:
+        prom_status = st.selectbox("PROM", ["No", "Yes"], index=0, key="main_prom")
+        prom_hours, prom_mins = 0, 0
+        if prom_status == "Yes":
+            ph_col, pm_col = st.columns(2)
+            with ph_col:
+                prom_hours = st.number_input("PROM Hours", min_value=0, value=0, key="main_prom_h")
+            with pm_col:
+                prom_mins = st.number_input("PROM Mins", min_value=0, max_value=59, value=0, key="main_prom_m")
+                
+        ab_status = st.selectbox("Mother Received Antibiotic", ["No", "Yes"], index=0, key="main_ab_status")
+        ab_name, ab_doses = "", 0
+        if ab_status == "Yes":
+            ab_select = st.selectbox("Antibiotic Name", ["Ampicillin", "Clindamycin", "Other"], key="main_ab_sel")
+            ab_name = st.text_input("Enter Antibiotic Name", value="Ampicillin", key="main_ab_txt") if ab_select == "Other" else ab_select
+            ab_doses = st.number_input("Number of Doses", min_value=1, value=1, key="main_ab_doses")
+
+    with col_rf2:
+        hvs_status = st.selectbox("HVS Positive", ["No", "Yes"], index=0, key="main_hvs")
+        hvs_org, hvs_treat = "", ""
+        if hvs_status == "Yes":
+            hvs_org = st.text_input("Organism Name", value="", key="main_hvs_org")
+            hvs_treat = st.selectbox("Status", ["Treated", "Non Treated"], key="main_hvs_treat")
+
+        gbs_status = st.selectbox("GBS Positive", ["No", "Yes"], index=0, key="main_gbs")
+        gbs_site = ""
+        if gbs_status == "Yes":
+            gbs_site = st.selectbox("GBS Site", ["in urine", "vaginal"], key="main_gbs_site")
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        hypo_status = st.selectbox("Hypothyroidism", ["No", "Yes"], index=0, key="main_hypo")
+        thyrox_status = "No"
+        if hypo_status == "Yes":
+            thyrox_status = st.selectbox("On Thyroxin?", ["No", "Yes"], key="main_thyrox")
+            
+    with col_m2:
+        dm_status = st.selectbox("Maternal / Gestational Diabetes Mellitus", ["No", "Gestational DM", "Pre-existing DM"], index=0, key="main_dm")
+        dm_treat = "No treatment"
+        if dm_status != "No":
+            dm_treat = st.selectbox("Treatment Type", ["diet control", "metformin", "insulin", "no treatment"], key="main_dm_treat")
+
+    risk_input = st.text_input("Other Risk Factors / Notes", value="", key="main_risk")
+
+    st.markdown("### 💓 Echocardiography & Consultations (الإيكو والاستشارات)")
+    col_ec1, col_ec2 = st.columns(2)
+    with col_ec1:
+        echo_status = st.selectbox("Echocardiography", ["", "Not requested", "Requested as routine OPD", "Requested before discharge"], index=0, key="main_echo_st")
+        echo_result = st.text_area("Echo Result", value="", key="main_echo_res")
+        echo_fu = st.number_input("Follow-up Echo (after X months)", min_value=0, value=0, key="main_echo_fu")
+    with col_ec2:
+        consult_select = st.selectbox("Consultation Needed", ["None", "Orthopedic consultation", "Pedia surgery consultation", "Dermatology consultation", "Ophthalmology consultation", "Other Custom"], key="main_cons_sel")
+        consultation_type = st.text_input("Enter Custom Consultation", value="", key="main_cons_txt") if consult_select == "Other Custom" else (consult_select if consult_select != "None" else "")
+
+    st.markdown("### 🍼 Feeding & Medications")
     new_feeding = st.selectbox("Feeding", ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"], index=0, key="main_feed")
 
-    st.markdown("### 💉 Medications & Vaccines Status")
     col_v1, col_v2, col_v3 = st.columns(3)
     with col_v1:
         new_vit_k = st.selectbox("Vitamin K", ["Given", "Not Given"], index=0, key="main_vitk")
@@ -341,7 +465,6 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     with col_sc3:
         new_hearing = st.selectbox("Hearing Screening", ["Pending", "Pass", "Fail"], index=0, key="main_hearing")
 
-    risk_input = st.text_input("Risk Factors", value="", key="main_risk")
     mgmt_plan = st.text_area("Management Plan / Medications", value="", key="main_mgmt")
     next_labs = st.text_input("Next Labs Due", value="", key="main_nlabs")
 
@@ -349,8 +472,8 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
         if new_mrn:
             conn = get_db_connection()
             conn.execute(
-                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, mother_bg_val, baby_bg_val, dat_val, risk_input, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery, new_cchd, new_red_reflex, new_hearing, new_vit_k, new_hepb, new_rsv, new_feeding)
+                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_abo, mother_rh, baby_abo, baby_rh, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type, prom_status, prom_hours, prom_mins, antibiotic_status, antibiotic_name, antibiotic_doses, hvs_status, hvs_organism, hvs_treated, gbs_status, gbs_site, hypothyroid_status, thyroxine_status, dm_status, dm_treatment, echo_status, echo_result, echo_followup_months, consultation_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, m_abo, m_rh, b_abo, b_rh, dat_val, risk_input, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery, new_cchd, new_red_reflex, new_hearing, new_vit_k, new_hepb, new_rsv, new_feeding, prom_status, prom_hours, prom_mins, ab_status, ab_name, ab_doses, hvs_status, hvs_org, hvs_treat, gbs_status, gbs_site, hypo_status, thyrox_status, dm_status, dm_treat, echo_status, echo_result, echo_fu, consultation_type)
             )
             conn.commit()
             conn.close()
@@ -401,43 +524,60 @@ st.markdown("---")
 st.markdown(f"### 🩺 Active Patient Management: **{current_patient['baby_name']}** (MRN: {current_patient['mrn']})")
 
 # --- Main Interface Tabs ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📋 Crib Card & Clinical Profile", 
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📋 Crib Card & Profile", 
     "📈 Bilirubin Log", 
-    "🧪 Cumulative Labs & Comparison", 
-    "💡 Clinical Summary", 
-    "📤 Shift Handover (Secure Internal & Print)"
+    "🧪 Cumulative Labs", 
+    "📷 Ultrasound, X-Ray & Echo",
+    "🩸 RBS Log",
+    "📤 Shift Handover"
 ])
 
 with tab1:
     st.subheader(f"Hospital Crib Card Format & Patient Editing: {current_patient['baby_name']}")
     
-    with st.expander("✏️ Edit Patient Details, Feeding & Vaccines"):
+    with st.expander("✏️ Edit Patient Details, Risk Factors, Echo, Consultations & Vaccines", expanded=True):
         edit_name = st.text_input("Edit Patient Name", value=current_patient["baby_name"], key="tab1_edit_name")
         edit_diag = st.text_area("Edit Diagnosis", value=current_patient["diagnosis"], key="tab1_edit_diag")
         edit_mgmt = st.text_area("Edit Management Plan", value=current_patient["management_plan"], key="tab1_edit_mgmt")
         edit_labs = st.text_input("Edit Next Labs Due", value=current_patient["next_labs_due"], key="tab1_edit_labs")
         
-        st.markdown("**Feeding Type:**")
+        col_eb1, col_eb2, col_eb3, col_eb4 = st.columns(4)
+        with col_eb1:
+            edit_m_abo = st.selectbox("Mother ABO", ["A", "B", "AB", "O"], index=["A", "B", "AB", "O"].index(current_patient["mother_abo"]), key="tab1_em_abo")
+        with col_eb2:
+            edit_m_rh = st.selectbox("Mother Rh", ["POS", "NEG"], index=["POS", "NEG"].index(current_patient["mother_rh"]), key="tab1_em_rh")
+        with col_eb3:
+            edit_b_abo = st.selectbox("Baby ABO", ["A", "B", "AB", "O"], index=["A", "B", "AB", "O"].index(current_patient["baby_abo"]), key="tab1_eb_abo")
+        with col_eb4:
+            edit_b_rh = st.selectbox("Baby Rh", ["POS", "NEG"], index=["POS", "NEG"].index(current_patient["baby_rh"]), key="tab1_eb_rh")
+
+        edit_dat = st.selectbox("DAT Test", ["Negative", "Positive"], index=["Negative", "Positive"].index(current_patient["dat"]), key="tab1_edat")
+        
         feed_opt = ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"]
         edit_feeding = st.selectbox("Feeding", feed_opt, index=feed_opt.index(current_patient["feeding_type"]) if current_patient["feeding_type"] in feed_opt else 0, key="tab1_edit_feed")
 
-        st.markdown("**Vaccines & Medications Status:**")
         v_opt = ["Given", "Not Given"]
         edit_vit_k = st.selectbox("Vitamin K", v_opt, index=v_opt.index(current_patient["vit_k_status"]) if current_patient["vit_k_status"] in v_opt else 0, key="tab1_edit_vitk")
         edit_hepb = st.selectbox("Hepatitis B Vaccine", v_opt, index=v_opt.index(current_patient["hepb_status"]) if current_patient["hepb_status"] in v_opt else 0, key="tab1_edit_hepb")
         edit_rsv = st.selectbox("RSV Vaccine / Prophylaxis", v_opt, index=v_opt.index(current_patient["rsv_status"]) if current_patient["rsv_status"] in v_opt else 1, key="tab1_edit_rsv")
 
-        st.markdown("**Screening Tests Status:**")
         opt_list = ["Pending", "Pass", "Fail"]
         edit_cchd = st.selectbox("CCHD Status", opt_list, index=opt_list.index(current_patient["cchd_status"]) if current_patient["cchd_status"] in opt_list else 0, key="tab1_edit_cchd")
         edit_red = st.selectbox("Red Reflex Status", opt_list, index=opt_list.index(current_patient["red_reflex_status"]) if current_patient["red_reflex_status"] in opt_list else 0, key="tab1_edit_red")
         edit_hearing = st.selectbox("Hearing Screening Status", opt_list, index=opt_list.index(current_patient["hearing_status"]) if current_patient["hearing_status"] in opt_list else 0, key="tab1_edit_hearing")
         
+        edit_echo_options = ["", "Not requested", "Requested as routine OPD", "Requested before discharge"]
+        edit_echo_idx = edit_echo_options.index(current_patient["echo_status"]) if current_patient["echo_status"] in edit_echo_options else 0
+        edit_echo_st = st.selectbox("Echocardiography", edit_echo_options, index=edit_echo_idx, key="tab1_edit_echo_st")
+        edit_echo_res = st.text_input("Echo Result", value=current_patient["echo_result"], key="tab1_edit_echo_res")
+        edit_echo_fu = st.number_input("Follow-up Echo (months)", min_value=0, value=int(current_patient["echo_followup_months"]), key="tab1_edit_echo_fu")
+        edit_consult = st.text_input("Consultation Type", value=current_patient["consultation_type"], key="tab1_edit_consult")
+
         if st.button("Save Patient Updates", key="tab1_save_updates_btn"):
             conn = get_db_connection()
-            conn.execute("UPDATE patients SET baby_name = ?, diagnosis = ?, management_plan = ?, next_labs_due = ?, cchd_status = ?, red_reflex_status = ?, hearing_status = ?, vit_k_status = ?, hepb_status = ?, rsv_status = ?, feeding_type = ? WHERE mrn = ?",
-                         (edit_name, edit_diag, edit_mgmt, edit_labs, edit_cchd, edit_red, edit_hearing, edit_vit_k, edit_hepb, edit_rsv, edit_feeding, current_patient["mrn"]))
+            conn.execute("UPDATE patients SET baby_name = ?, diagnosis = ?, management_plan = ?, next_labs_due = ?, mother_abo = ?, mother_rh = ?, baby_abo = ?, baby_rh = ?, dat = ?, cchd_status = ?, red_reflex_status = ?, hearing_status = ?, vit_k_status = ?, hepb_status = ?, rsv_status = ?, feeding_type = ?, echo_status = ?, echo_result = ?, echo_followup_months = ?, consultation_type = ? WHERE mrn = ?",
+                         (edit_name, edit_diag, edit_mgmt, edit_labs, edit_m_abo, edit_m_rh, edit_b_abo, edit_b_rh, edit_dat, edit_cchd, edit_red, edit_hearing, edit_vit_k, edit_hepb, edit_rsv, edit_feeding, edit_echo_st, edit_echo_res, edit_echo_fu, edit_consult, current_patient["mrn"]))
             conn.commit()
             conn.close()
             st.success("تم تحديث بيانات المريض بنجاح!")
@@ -466,6 +606,8 @@ with tab1:
     if st.button("🗑️ Delete Patient Record", key="tab1_delete_pat_btn"):
         conn = get_db_connection()
         conn.execute("DELETE FROM labs WHERE mrn = ?", (current_patient["mrn"],))
+        conn.execute("DELETE FROM imaging WHERE mrn = ?", (current_patient["mrn"],))
+        conn.execute("DELETE FROM rbs_logs WHERE mrn = ?", (current_patient["mrn"],))
         conn.execute("DELETE FROM patients WHERE mrn = ?", (current_patient["mrn"],))
         conn.commit()
         conn.close()
@@ -476,39 +618,75 @@ with tab1:
 
     st.markdown("---")
     st.markdown("### 1. Identification & Situation")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("MRN", current_patient["mrn"])
-        st.metric("Birth Date/Time", current_patient["birth_date"])
-        st.metric("Gender", current_patient["gender"])
-    with c2:
-        st.metric("Gestational Age", current_patient["gestational_age"])
-        st.metric("Birth Weight", current_patient["birth_weight"])
-        st.metric("Treating Consultant", current_patient["primary_physician"])
-    with c3:
-        st.metric("Mother Blood Group", current_patient["blood_group_mother"])
-        st.metric("Baby Blood Group", current_patient["blood_group_baby"])
-        st.metric("DAT Test", current_patient["dat"])
+    
+    m_bg_display = f"{current_patient['mother_abo']} {current_patient['mother_rh']}"
+    if current_patient['mother_abo'] == "O" or current_patient['mother_rh'] == "NEG":
+        m_bg_html = f'<span class="pink-warning">{m_bg_display}</span>'
+    else:
+        m_bg_html = m_bg_display
+
+    dat_display = current_patient['dat']
+    if "POS" in dat_display.upper():
+        dat_html = f'<span class="pink-warning">{dat_display}</span>'
+    else:
+        dat_html = dat_display
+
+    col_id1, col_id2, col_id3 = st.columns(3)
+    with col_id1:
+        st.markdown(f"<div style='font-size:13px;'><b>MRN:</b> {current_patient['mrn']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;'><b>Birth Date/Time:</b> {current_patient['birth_date']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;'><b>Gender:</b> {current_patient['gender']}</div>", unsafe_allow_html=True)
+    with col_id2:
+        st.markdown(f"<div style='font-size:13px;'><b>Gestational Age:</b> {current_patient['gestational_age']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;'><b>Birth Weight:</b> {current_patient['birth_weight']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;'><b>Treating Consultant:</b> {current_patient['primary_physician']}</div>", unsafe_allow_html=True)
+    with col_id3:
+        st.markdown(f"<div style='font-size:13px;'><b>Mother Blood Group:</b> {m_bg_html}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;'><b>Baby Blood Group:</b> {current_patient['baby_abo']} {current_patient['baby_rh']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:13px;'><b>DAT Test:</b> {dat_html}</div>", unsafe_allow_html=True)
+
+    st.markdown("### ⚠️ Risk Factors & Maternal History")
+    st.markdown(f"""
+    <div style='font-size:13px; background-color:#f1f3f4; padding:10px; border-radius:5px;'>
+    <b>PROM:</b> {current_patient['prom_status']} {f"({current_patient['prom_hours']}h {current_patient['prom_mins']}m)" if current_patient['prom_status']=='Yes' else ''}<br>
+    <b>Antibiotic:</b> {current_patient['antibiotic_status']} {f"({current_patient['antibiotic_name']}, {current_patient['antibiotic_doses']} doses)" if current_patient['antibiotic_status']=='Yes' else ''}<br>
+    <b>HVS Positive:</b> {current_patient['hvs_status']} {f"({current_patient['hvs_organism']}, {current_patient['hvs_treated']})" if current_patient['hvs_status']=='Yes' else ''}<br>
+    <b>GBS Positive:</b> {current_patient['gbs_status']} {f"({current_patient['gbs_site']})" if current_patient['gbs_status']=='Yes' else ''}<br>
+    <b>Hypothyroidism:</b> {current_patient['hypothyroid_status']} {f"(On Thyroxin: {current_patient['thyroxine_status']})" if current_patient['hypothyroid_status']=='Yes' else ''}<br>
+    <b>Diabetes Mellitus:</b> {current_patient['dm_status']} {f"(Treatment: {current_patient['dm_treatment']})" if current_patient['dm_status']!='No' else ''}<br>
+    <b>Other Risks:</b> {current_patient['risk_factors']}
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### 💓 Echocardiography & Consultations")
+    st.markdown(f"""
+    <div style='font-size:13px; background-color:#eef9ff; padding:10px; border-radius:5px;'>
+    <b>Echocardiography:</b> {current_patient['echo_status'] or 'Not specified'}<br>
+    <b>Echo Result:</b> {current_patient['echo_result'] or 'N/A'}<br>
+    <b>Follow-up Echo:</b> {current_patient['echo_followup_months']} months<br>
+    <b>Consultations:</b> {current_patient['consultation_type'] or 'None'}
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("### 🍼 Feeding & Medications")
     fc1, fc2, fc3, fc4 = st.columns(4)
     with fc1:
-        st.metric("Feeding Type", current_patient["feeding_type"])
+        st.markdown(f"<div style='font-size:12px;'><b>Feeding:</b> {current_patient['feeding_type']}</div>", unsafe_allow_html=True)
     with fc2:
-        st.metric("Vitamin K", current_patient["vit_k_status"])
+        st.markdown(f"<div style='font-size:12px;'><b>Vit K:</b> {current_patient['vit_k_status']}</div>", unsafe_allow_html=True)
     with fc3:
-        st.metric("Hepatitis B", current_patient["hepb_status"])
+        st.markdown(f"<div style='font-size:12px;'><b>Hep B:</b> {current_patient['hepb_status']}</div>", unsafe_allow_html=True)
     with fc4:
-        st.metric("RSV Prophylaxis", current_patient["rsv_status"])
+        st.markdown(f"<div style='font-size:12px;'><b>RSV:</b> {current_patient['rsv_status']}</div>", unsafe_allow_html=True)
 
-    st.markdown("### 🔍 Screening Tests Results")
+    st.markdown("### 🔍 Screening Tests")
     sc1, sc2, sc3 = st.columns(3)
     with sc1:
-        st.metric("CCHD Screening", current_patient["cchd_status"])
+        st.markdown(f"<div style='font-size:12px;'><b>CCHD:</b> {current_patient['cchd_status']}</div>", unsafe_allow_html=True)
     with sc2:
-        st.metric("Red Reflex Test", current_patient["red_reflex_status"])
+        st.markdown(f"<div style='font-size:12px;'><b>Red Reflex:</b> {current_patient['red_reflex_status']}</div>", unsafe_allow_html=True)
     with sc3:
-        st.metric("Hearing Screening", current_patient["hearing_status"])
+        st.markdown(f"<div style='font-size:12px;'><b>Hearing:</b> {current_patient['hearing_status']}</div>", unsafe_allow_html=True)
 
     st.markdown("### 2. Background & Assessment")
     st.info(f"📝 **Diagnosis ({current_patient['delivery_type']}):**\n\n{current_patient['diagnosis']}\n\n**Management Plan:**\n{current_patient['management_plan']}")
@@ -519,7 +697,6 @@ with tab2:
 
     with st.expander("➕ Add New SBR Result"):
         sample_date = st.date_input("Sample Date (تاريخ سحب العينة)", value=datetime.date.today(), key="tab2_sbr_date")
-        
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             sample_hour = st.number_input("Hour (الساعة 0-23)", min_value=0, max_value=23, value=12, key="tab2_sbr_hr")
@@ -549,8 +726,19 @@ with tab2:
     if not labs_df.empty:
         bili_trend_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
         if not bili_trend_df.empty:
-            st.markdown("### 🔵 Patient Bilirubin Log Table")
-            st.dataframe(bili_trend_df, use_container_width=True)
+            st.markdown("### 🔵 Patient Bilirubin Log Table (مع إمكانية الحذف)")
+            for idx, row in bili_trend_df.iterrows():
+                col_info, col_del = st.columns([5, 1])
+                with col_info:
+                    st.text(f"ID: {row['id']} | Time: {row['sample_datetime']} | Age: {row['hours_elapsed']}h | Value: {row['test_value']} {row['unit']}")
+                with col_del:
+                    if st.button("🗑️ Delete", key=f"del_sbr_{row['id']}"):
+                        conn = get_db_connection()
+                        conn.execute("DELETE FROM labs WHERE id = ?", (row['id'],))
+                        conn.commit()
+                        conn.close()
+                        st.success("تم حذف قراءة البيليروبين بنجاح!")
+                        st.rerun()
         else:
             st.info("No Bilirubin readings recorded yet.")
 
@@ -599,98 +787,128 @@ with tab3:
             st.success(f"Lab result saved successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
             
-    st.markdown("### 📋 Cumulative Lab Records & Comparison Table")
+    st.markdown("### 📋 Cumulative Lab Records & Delete Option")
     raw_labs_df = current_patient["labs"]
     if not raw_labs_df.empty:
-        def get_reference(t_name):
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT min_val, max_val, unit FROM custom_references WHERE test_name = ?", (t_name,))
-            row = cursor.fetchone()
-            conn.close()
-            if row:
-                return f"{row['min_val']} - {row['max_val']} {row['unit']}"
-            return "Standard Range"
-
-        display_labs = raw_labs_df.copy()
-        display_labs["Reference Range"] = display_labs["test_name"].apply(lambda x: get_reference(x))
-        st.dataframe(display_labs, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("**Cumulative Trend Comparison (مقارنة التغير بين القراءات):**")
-        
-        unique_tests = raw_labs_df["test_name"].unique()
-        for t_name in unique_tests:
-            t_df = raw_labs_df[raw_labs_df["test_name"] == t_name].sort_values("hours_elapsed").reset_index(drop=True)
-            if len(t_df) > 0:
-                comparison_rows = []
-                prev_val = None
-                for idx, row in t_df.iterrows():
-                    curr_val = row["test_value"]
-                    if prev_val is None:
-                        trend_status = "Baseline (أول قياس)"
-                    elif curr_val > prev_val:
-                        trend_status = "Increased (ارتفاع)"
-                    elif curr_val < prev_val:
-                        trend_status = "Decreased (انخفاض)"
-                    else:
-                        trend_status = "Stable (ثابت)"
-                        
-                    comparison_rows.append({
-                        "Hours of Life": row["hours_elapsed"],
-                        "Sample Time": row["sample_datetime"],
-                        "Test Name": row["test_name"],
-                        "Value": curr_val,
-                        "Unit": row["unit"],
-                        "Reference Range": get_reference(row["test_name"]),
-                        "Trend Comparison": trend_status
-                    })
-                    prev_val = curr_val
-                
-                comp_df = pd.DataFrame(comparison_rows)
-                st.markdown(f"**🧪 Test: {t_name}**")
-                st.dataframe(comp_df, use_container_width=True)
+        for idx, row in raw_labs_df.iterrows():
+            col_l1, col_l2 = st.columns([5, 1])
+            with col_l1:
+                st.text(f"ID: {row['id']} | Test: {row['test_name']} | Val: {row['test_value']} {row['unit']} | Time: {row['sample_datetime']} ({row['hours_elapsed']}h)")
+            with col_l2:
+                if st.button("🗑️ Delete", key=f"del_lab_{row['id']}"):
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM labs WHERE id = ?", (row['id'],))
+                    conn.commit()
+                    conn.close()
+                    st.success("تم حذف التحليل بنجاح!")
+                    st.rerun()
     else:
         st.info("لا توجد تحاليل مسجلة.")
 
 with tab4:
-    st.subheader("💡 Clinical Summary & Data Log")
-    labs_df = current_patient["labs"]
-    bili_labs = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])] if not labs_df.empty else pd.DataFrame()
-    if not bili_labs.empty:
-        latest_sbr = bili_labs.iloc[-1]["test_value"]
-        latest_hrs = bili_labs.iloc[-1]["hours_elapsed"]
-        st.info(f"**Latest recorded SBR:** {round(latest_sbr, 1)} µmol/L at {latest_hrs} hours of life.")
+    st.subheader("📷 Ultrasound, X-Ray & Echo Results (سجل الأشعة والسونار والإيكو)")
+
+    with st.expander("➕ Add New Imaging / Echo Result"):
+        img_category = st.selectbox("Category", ["Ultrasound", "X-Ray", "Echocardiography"], key="img_cat")
+        if img_category == "Ultrasound":
+            img_name = st.selectbox("Select US Type", ["Cranial Ultrasound", "Abdomen Ultrasound", "Hip Ultrasound", "Scrotal Ultrasound", "Sacral Ultrasound", "Other US"], key="us_name")
+        elif img_category == "X-Ray":
+            img_name = st.selectbox("Select X-Ray Type", ["X-Ray Clavicles", "Chest X-Ray", "Chest and Abdomen X-Ray", "Other X-Ray"], key="xr_name")
+        else:
+            img_name = "Echocardiography"
+            
+        img_date = st.date_input("Date", value=datetime.date.today(), key="img_date")
+        img_result = st.text_area("Result / Findings (النتيجة والتقرير)", value="", key="img_res")
+        
+        if st.button("Save Imaging Result", key="save_img_btn"):
+            if img_result:
+                conn = get_db_connection()
+                conn.execute("INSERT INTO imaging (mrn, img_type, img_name, img_result, img_date) VALUES (?, ?, ?, ?, ?)",
+                             (current_patient["mrn"], img_category, img_name, img_result, str(img_date)))
+                conn.commit()
+                conn.close()
+                st.success("تم حفظ التقرير بنجاح!")
+                st.rerun()
+            else:
+                st.error("الرجاء كتابة النتيجة.")
+
+    img_df = current_patient["imaging"]
+    if not img_df.empty:
+        st.markdown("### Recorded Imaging & Echo Reports (مع إمكانية الحذف):")
+        for idx, row in img_df.iterrows():
+            col_i1, col_i2 = st.columns([5, 1])
+            with col_i1:
+                st.markdown(f"**[{row['img_type']}] {row['img_name']}** ({row['img_date']})\n> {row['img_result']}")
+            with col_i2:
+                if st.button("🗑️ Delete", key=f"del_img_{row['id']}"):
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM imaging WHERE id = ?", (row['id'],))
+                    conn.commit()
+                    conn.close()
+                    st.success("تم حذف الفحص بنجاح!")
+                    st.rerun()
     else:
-        st.info("No SBR results recorded yet.")
+        st.info("لا توجد فحوصات أشعة أو إيكو مسجلة.")
 
 with tab5:
+    st.subheader("🩸 RBS Tracking (سجل سكر الدم العشوائي)")
+
+    with st.expander("➕ Add RBS Measurement"):
+        rbs_val = st.number_input("RBS Value (mmol/L or mg/dL)", min_value=0.0, max_value=30.0, value=4.5, key="rbs_val_input")
+        rbs_date = st.date_input("Date", value=datetime.date.today(), key="rbs_date")
+        rbs_hr = st.number_input("Hour (0-23)", min_value=0, max_value=23, value=12, key="rbs_hr")
+        rbs_min = st.number_input("Minute (0-59)", min_value=0, max_value=59, value=0, key="rbs_min")
+        
+        if st.button("Save RBS Reading", key="save_rbs_btn"):
+            rbs_time_str = f"{rbs_date} {str(rbs_hr).zfill(2)}:{str(rbs_min).zfill(2)}"
+            conn = get_db_connection()
+            conn.execute("INSERT INTO rbs_logs (mrn, rbs_val, rbs_time) VALUES (?, ?, ?)",
+                         (current_patient["mrn"], rbs_val, rbs_time_str))
+            conn.commit()
+            conn.close()
+            st.success("تم تسجيل قراءة الـ RBS بنجاح!")
+            st.rerun()
+
+    rbs_df = current_patient["rbs"]
+    if not rbs_df.empty:
+        st.markdown("### Recorded RBS Logs (مع إمكانية الحذف):")
+        for idx, row in rbs_df.iterrows():
+            col_r1, col_r2 = st.columns([5, 1])
+            with col_r1:
+                st.text(f"ID: {row['id']} | Time: {row['rbs_time']} | Value: {row['rbs_val']}")
+            with col_r2:
+                if st.button("🗑️ Delete", key=f"del_rbs_{row['id']}"):
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM rbs_logs WHERE id = ?", (row['id'],))
+                    conn.commit()
+                    conn.close()
+                    st.success("تم حذف قراءة الـ RBS بنجاح!")
+                    st.rerun()
+    else:
+        st.info("لا توجد قراءات RBS مسجلة.")
+
+with tab6:
     st.subheader("📤 Shift Handover (Secure Internal & Print)")
     
-    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية (Anonymize Patient Identity)", value=False, key="tab5_anon_checkbox")
+    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية (Anonymize Patient Identity)", value=False, key="tab6_anon_checkbox")
     
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
     
-    latest_sbr_txt = "N/A"
-    if not current_patient["labs"].empty:
-        bili_row = current_patient["labs"][current_patient["labs"]["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
-        if not bili_row.empty:
-            r = bili_row.iloc[-1]
-            latest_sbr_txt = f"{r['test_value']} {r['unit']} at {r['hours_elapsed']} hours"
-        
     handover_text = f"""📋 NEONATAL NURSERY SHIFT HANDOVER LOG (INTERNAL)
 Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 Patient: {p_name} (MRN: {p_mrn})
 Status: {current_patient['status']}
 GA: {current_patient['gestational_age']} | Weight: {current_patient['birth_weight']}
-Treating Consultant: {current_patient['primary_physician']}
-Diagnosis ({current_patient['delivery_type']}): {current_patient['diagnosis']}
-Risk Factors: {current_patient['risk_factors']} | DAT: {current_patient['dat']}
+Consultant: {current_patient['primary_physician']} | Delivery: {current_patient['delivery_type']}
+Diagnosis: {current_patient['diagnosis']}
+Mother BG: {current_patient['mother_abo']} {current_patient['mother_rh']} | Baby BG: {current_patient['baby_abo']} {current_patient['baby_rh']} | DAT: {current_patient['dat']}
 Feeding: {current_patient['feeding_type']}
-Medications & Vaccines: Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]
+Risk Factors: PROM [{current_patient['prom_status']}], AB [{current_patient['antibiotic_status']}], HVS [{current_patient['hvs_status']}], GBS [{current_patient['gbs_status']}], Hypothyroid [{current_patient['hypothyroid_status']}], DM [{current_patient['dm_status']}]
+Echocardiography: Status [{current_patient['echo_status']}], Result [{current_patient['echo_result']}], Follow-up [{current_patient['echo_followup_months']} months]
+Consultations: {current_patient['consultation_type']}
+Medications: Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]
 Screening: CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]
-Latest SBR: {latest_sbr_txt}
 
 Management Plan:
 {current_patient['management_plan']}
@@ -701,7 +919,6 @@ Next Labs Due:
     st.markdown("### Report Preview (Secure Internal Review & Print):")
     st.code(handover_text, language="text")
     
-    if st.button("🖨️ Print Report (Save as PDF securely)", key="tab5_print_btn"):
+    if st.button("🖨️ Print Report (Save as PDF securely)", key="tab6_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Use your browser's print dialog (Ctrl+P / Cmd+P) to print or save as PDF securely.")
-
