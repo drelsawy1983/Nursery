@@ -20,7 +20,6 @@ st.markdown("""
 .metric-container { font-size: 11px !important; }
 .pink-warning { background-color: #ffe6f2; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
 
-/* Print styling to isolate only the handover report */
 @media print {
     body * {
         visibility: hidden;
@@ -535,12 +534,14 @@ if not census_df.empty:
     st.dataframe(census_df, use_container_width=True)
     
     st.markdown("### 🗂️ Quick Select Patient:")
-    cols = st.columns(min(len(patients_dict), 4))
-    for idx, (mrn_val, p_data) in enumerate(patients_dict.items()):
-        col_idx = idx % 4
-        with cols[col_idx]:
-            if st.button(f"👶 {p_data['baby_name']}\nMRN: {mrn_val}\n[{p_data['status']}]", key=f"btn_pat_{mrn_val}"):
-                st.session_state['active_mrn'] = mrn_val
+    num_patients = len(patients_dict)
+    if num_patients > 0:
+        cols = st.columns(min(num_patients, 4))
+        for idx, (mrn_val, p_data) in enumerate(patients_dict.items()):
+            col_idx = idx % 4
+            with cols[col_idx]:
+                if st.button(f"👶 {p_data['baby_name']}\nMRN: {mrn_val}\n[{p_data['status']}]", key=f"btn_pat_{mrn_val}"):
+                    st.session_state['active_mrn'] = mrn_val
 else:
     st.info("No records found in this mode.")
 
@@ -853,7 +854,6 @@ with tab4:
             st.success(f"Lab result saved successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
 
-    # Compare repeated labs button feature
     if st.button("📊 Compare Repeated Labs Side-by-Side", key="compare_labs_btn"):
         raw_labs_df = current_patient["labs"]
         if not raw_labs_df.empty:
@@ -934,7 +934,6 @@ with tab5:
             else:
                 st.error("Please enter the result description.")
 
-    # Echo Quick Editor Box
     with st.expander("💓 Edit Echocardiography Details", expanded=False):
         e_echo_options = ["", "Not requested", "Requested as routine OPD", "Requested before discharge"]
         e_echo_idx = e_echo_options.index(current_patient["echo_status"]) if current_patient["echo_status"] in e_echo_options else 0
@@ -1013,7 +1012,6 @@ with tab7:
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
     
-    # Build HTML table structured report mimicking official handover sheet
     labs_rows = ""
     if not current_patient["labs"].empty:
         for idx, r in current_patient["labs"].iterrows():
@@ -1150,10 +1148,10 @@ with tab7:
     """
 
     st.markdown("### Report Preview (Professional Form Format):")
+    # تم التعديل هنا لعرض الـ HTML بشكل صحيح ومقروء وليس ككود نصي
     st.markdown(html_handover_report, unsafe_allow_html=True)
     
     st.markdown("---")
     if st.button("🖨️ Print Report / Save as PDF securely", key="tab7_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Click your browser or tablet print option and select 'Save as PDF' to securely save the formatted handover report.")
-
