@@ -47,7 +47,9 @@ def init_db() -> None:
             status TEXT,
             discharge_notes TEXT,
             management_plan TEXT,
-            next_labs_due TEXT
+            next_labs_due TEXT,
+            primary_physician TEXT,
+            diagnosis TEXT
         )
     ''')
     cursor.execute('''
@@ -62,29 +64,10 @@ def init_db() -> None:
             FOREIGN KEY (mrn) REFERENCES patients (mrn)
         )
     ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            action TEXT,
-            patient_mrn TEXT,
-            role TEXT
-        )
-    ''')
     conn.commit()
     conn.close()
 
 init_db()
-
-def log_audit(action: str, patient_mrn: str, role: str) -> None:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO audit_log (timestamp, action, patient_mrn, role) VALUES (?, ?, ?, ?)",
-        (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), action, patient_mrn, role)
-    )
-    conn.commit()
-    conn.close()
 
 # --- Authentication & Role-Based Access Control (UNTOUCHED AS REQUESTED) ---
 def check_password():
@@ -176,8 +159,8 @@ def call_gemini_rest(prompt: str, image_bytes=None, mime_type="image/jpeg") -> s
 
 def extract_medical_data_with_gemini(image_bytes=None, audio_bytes=None, mime_type="image/jpeg") -> dict:
     prompt = """
-    Extract neonatal clinical data from this crib card or lab image/audio. Return ONLY valid JSON with these exact keys:
-    mrn, baby_name, gestational_age_weeks, birth_weight_kg, mother_blood_group, baby_blood_group, dat_status, risk_factors, total_bilirubin, bilirubin_unit, tsh, crp, management_plan.
+    Extract neonatal clinical data matching hospital crib card format. Return ONLY valid JSON with these exact keys:
+    mrn, baby_name, gestational_age_weeks, birth_weight_kg, birth_datetime, gender, mother_blood_group, baby_blood_group, dat_status, risk_factors, primary_physician, diagnosis, management_plan.
     No extra text, just raw JSON.
     """
     file_bytes = image_bytes if image_bytes else audio_bytes
@@ -193,12 +176,11 @@ def extract_medical_data_with_gemini(image_bytes=None, audio_bytes=None, mime_ty
         return {"baby_name": "Extracted via AI", "management_plan": res_text}
 
 def get_ai_clinical_summary(p, sbr, hrs, risk) -> str:
-    prompt = (f"Neonatal case: GA {p['ga_weeks']} weeks, birth weight "
-              f"{p['birth_weight']}, latest total bilirubin {sbr} umol/L at "
+    prompt = (f"Neonatal case: GA {p['ga_weeks']} weeks, weight "
+              f"{p['birth_weight']}, latest SBR {sbr} umol/L at "
               f"{hrs} hours, risk factors: {risk}, DAT {p['dat']}, mother "
               f"{p['blood_group_mother']}, baby {p['blood_group_baby']}. "
-              "Give a brief clinical summary and considerations per AAP 2022. "
-              "Do not give definitive orders or doses.")
+              "Give clinical summary per AAP 2022 guidelines. No dosing orders.")
     return call_gemini_rest(prompt)
 
 # --- Clinical Logic Helper Functions ---
@@ -234,10 +216,10 @@ def convert_to_umol(val: float, unit: str) -> float:
         return val * 17.1
     return val
 
-def compute_hours_of_life(birth_dt_str: str, current_dt_str: str) -> float:
+def compute_hours_of_life(birth_dt_str: str) -> float:
     try:
         dt_birth = None
-        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M"]:
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M", "%Y-%m-%d"]:
             try:
                 dt_birth = datetime.datetime.strptime(birth_dt_str.replace('H', '').strip(), fmt)
                 break
@@ -245,21 +227,13 @@ def compute_hours_of_life(birth_dt_str: str, current_dt_str: str) -> float:
                 continue
         if not dt_birth:
             dt_birth = datetime.datetime.now() - datetime.timedelta(days=1)
-            
-        dt_current = datetime.datetime.now()
-        if current_dt_str:
-            for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M"]:
-                try:
-                    dt_current = datetime.datetime.strptime(current_dt_str.replace('H', '').strip(), fmt)
-                    break
-                except Exception:
-                    continue
-        diff = dt_current - dt_birth
+        diff = datetime.datetime.now() - dt_birth
         return max(0.0, diff.total_seconds() / 3600.0)
     except Exception:
         return 24.0
 
 def get_aap_thresholds(ga_weeks: float, hours: float, has_risk: bool) -> tuple:
+    # AAP 2022 Kemper et al. standard risk-stratified heuristic thresholds (umol/L)
     base_photo = 170.0 if has_risk else 220.0
     base_exchange = 300.0 if has_risk else 380.0
     if hours < 24:
@@ -320,33 +294,39 @@ for p in db_patients:
         "discharge_notes": p["discharge_notes"],
         "management_plan": p["management_plan"],
         "next_labs_due": p["next_labs_due"],
+        "primary_physician": p["primary_physician"],
+        "diagnosis": p["diagnosis"],
         "labs": labs_df
     }
 
 # --- Main Page: Add New Newborn with Selectbox Input Hub ---
 st.markdown("---")
-with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(patients_dict) == 0):
-    st.markdown("إدخال مولود جديد بالذكاء الاصطناعي أو يدوياً:")
+with st.expander("➕ **Add New Newborn (Hospital Form & AI Input Hub)**", expanded=len(patients_dict) == 0):
+    st.markdown("إدخال بيانات مولود جديد مطابقة لتنسيق كريب كارد المستشفى:")
     
     col_input1, col_input2 = st.columns(2)
     with col_input1:
         new_mrn = st.text_input("Baby MRN (رقم الملف الطبي)")
-        new_name = st.text_input("Baby / Mother Name (اسم الطفل / الأم)")
+        new_name = st.text_input("Patient Full Name (اسم الطفل / الأم)")
+        new_ga = st.number_input("Gestational Age (weeks)", value=38.0)
+    with col_input2:
+        new_wt = st.number_input("Birth Weight (kg)", value=3.0)
+        new_physician = st.text_input("Primary Physician", value="DR IBRAHIM")
+        new_diagnosis = st.text_input("Diagnosis", value="PRETERM, SVD, AGA")
     
-    # القائمة المنسدلة لاختيار طريقة الإدخال
     input_method = st.selectbox(
         "اختر طريقة إدخال البيانات:",
         [
             "Manual / Direct (إدخال يدوي)",
-            "Open Camera (فتح الكاميرا المباشرة)",
+            "Open Camera (فتح الكاميرا الخلفية للـ Crib Card)",
             "Upload Photo (رفع صورة كريب كارد / تقرير)",
             "Open Microphone (تسجيل صوتي)"
         ]
     )
     
     extracted_json = None
-    if input_method == "Open Camera (فتح الكاميرا المباشرة)":
-        cam_file = st.camera_input("Take Crib Card / Document Photo")
+    if input_method == "Open Camera (فتح الكاميرا الخلفية للـ Crib Card)":
+        cam_file = st.camera_input("Take Crib Card / Document Photo (Rear Camera)")
         if cam_file and st.button("Extract Data with AI 🚀"):
             with st.spinner("جاري تحليل الصورة بالذكاء الاصطناعي..."):
                 extracted_json = extract_medical_data_with_gemini(image_bytes=cam_file.getvalue())
@@ -367,14 +347,14 @@ with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(
         st.success("✅ تم استخراج البيانات بنجاح! راجعها وقم بالتأكيد:")
         rev_mrn = st.text_input("Review MRN", value=str(extracted_json.get("mrn", new_mrn)))
         rev_name = st.text_input("Review Name", value=str(extracted_json.get("baby_name", new_name)))
-        rev_ga = st.number_input("Review GA (weeks)", value=float(extracted_json.get("gestational_age_weeks", 38.0)))
-        rev_wt = st.number_input("Review Weight (kg)", value=float(extracted_json.get("birth_weight_kg", 3.0)))
+        rev_ga = st.number_input("Review GA (weeks)", value=float(extracted_json.get("gestational_age_weeks", new_ga)))
+        rev_wt = st.number_input("Review Weight (kg)", value=float(extracted_json.get("birth_weight_kg", new_wt)))
         
         if st.button("Confirm and Save New Patient to Census"):
             conn = get_db_connection()
             conn.execute(
-                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (rev_mrn or "UNKNOWN", rev_name or "Newborn", rev_ga, rev_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Unknown", str(extracted_json.get("mother_blood_group", "Unknown")), str(extracted_json.get("baby_blood_group", "Unknown")), str(extracted_json.get("dat_status", "Negative")), str(extracted_json.get("risk_factors", "None")), "In Nursery", "", str(extracted_json.get("management_plan", "Routine care")), "Pending")
+                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rev_mrn or "UNKNOWN", rev_name or "Newborn", rev_ga, rev_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", str(extracted_json.get("mother_blood_group", "A POS")), str(extracted_json.get("baby_blood_group", "A POS")), str(extracted_json.get("dat_status", "Negative")), str(extracted_json.get("risk_factors", "Preterm")), "Still in Nursery", "", str(extracted_json.get("management_plan", "Routine care")), "Pending", new_physician, new_diagnosis)
             )
             conn.commit()
             conn.close()
@@ -385,8 +365,8 @@ with st.expander("➕ **Add New Newborn (AI Powered Input Hub)**", expanded=len(
         if new_mrn:
             conn = get_db_connection()
             conn.execute(
-                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_mrn, new_name or "Newborn", 38.0, 3.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Unknown", "Unknown", "Unknown", "Negative", "None", "In Nursery", "", "Initial observation", "Pending")
+                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_mrn, new_name or "Newborn", new_ga, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "A POS", "A POS", "Negative", "None", "Still in Nursery", "", "Initial observation", "Pending", new_physician, new_diagnosis)
             )
             conn.commit()
             conn.close()
@@ -443,9 +423,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 with tab1:
-    st.subheader(f"Patient Profile: {current_patient['baby_name']}")
+    st.subheader(f"Patient Form Format: {current_patient['baby_name']}")
     
-    status_options = ["In Nursery", "Discharged", "Transferred to NICU"]
+    # Status and Discharge / Transfer management
+    status_options = ["Still in Nursery", "Discharged", "Transferred to NICU"]
     try:
         default_status_idx = status_options.index(current_patient["status"])
     except ValueError:
@@ -457,15 +438,28 @@ with tab1:
     with col_st2:
         discharge_notes = st.text_input("Follow-up Date / Transfer Notes", current_patient["discharge_notes"])
     with col_st3:
-        if st.button("Update Status"):
+        if st.button("Update Status / Discharge / Delete"):
             conn = get_db_connection()
             conn.execute("UPDATE patients SET status = ?, discharge_notes = ? WHERE mrn = ?", (new_status, discharge_notes, current_patient["mrn"]))
             conn.commit()
             conn.close()
-            st.success("Status updated!")
+            st.success("Status updated successfully!")
             st.rerun()
 
+    if st.button("🗑️ Delete Patient Record"):
+        conn = get_db_connection()
+        conn.execute("DELETE FROM labs WHERE mrn = ?", (current_patient["mrn"],))
+        conn.execute("DELETE FROM patients WHERE mrn = ?", (current_patient["mrn"],))
+        conn.commit()
+        conn.close()
+        st.warning("Patient record deleted.")
+        if 'active_mrn' in st.session_state:
+            del st.session_state['active_mrn']
+        st.rerun()
+
     st.markdown("---")
+    # Hospital Crib Card structured sections matching the image
+    st.markdown("### 1. Identification & Situation")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.metric("MRN", current_patient["mrn"])
@@ -474,14 +468,14 @@ with tab1:
     with c2:
         st.metric("Gestational Age", current_patient["gestational_age"])
         st.metric("Birth Weight", current_patient["birth_weight"])
-        st.metric("Mother Blood Group", current_patient["blood_group_mother"])
+        st.metric("Primary Physician", current_patient["primary_physician"])
     with c3:
+        st.metric("Mother Blood Group", current_patient["blood_group_mother"])
         st.metric("Baby Blood Group", current_patient["blood_group_baby"])
         st.metric("DAT Test", current_patient["dat"])
-        st.metric("Risk Factors", current_patient["risk_factors"])
 
-    st.markdown("---")
-    st.info(f"📝 **Current Management Plan:**\n\n{current_patient['management_plan']}")
+    st.markdown("### 2. Background & Assessment")
+    st.info(f"📝 **Diagnosis & Management Plan:**\n\n{current_patient['diagnosis']}\n\n{current_patient['management_plan']}")
     st.warning(f"⏰ **Next Labs Due:**\n\n{current_patient['next_labs_due']}")
 
 with tab2:
@@ -495,17 +489,17 @@ with tab2:
     has_risk_factors = (current_patient.get("ga_weeks", 38.0) < 38.0) or is_abo or is_rh or is_dat
     
     st.markdown(f"""
-    **Automated Risk Evaluation:**
-    * **DAT Status:** {dat_res} ➔ {'⚠️ POSITIVE (Risk)' if is_dat else 'Negative'}
-    * **ABO Incompatibility:** {'⚠️ Detected (Mother O, Baby A/B/AB)' if is_abo else 'None'}
-    * **Rh Incompatibility:** {'⚠️ Detected (Mother Rh-, Baby Rh+)' if is_rh else 'None'}
-    * **Overall AAP Risk Category:** **{'WITH RISK FACTORS' if has_risk_factors else 'NO RISK FACTORS'}**
+    **Automated Risk Evaluation (AAP 2022):**
+    * **DAT Status:** {dat_res} ➔ {'⚠️ POSITIVE (Risk)' if is_dat else 'Negative'}[span_11](start_span)[span_11](end_span)
+    * **ABO Incompatibility:** {'⚠️ Detected (Mother O, Baby A/B/AB)' if is_abo else 'None'}[span_12](start_span)[span_12](end_span)
+    * **Rh Incompatibility:** {'⚠️ Detected (Mother Rh-, Baby Rh+)' if is_rh else 'None'}[span_13](start_span)[span_13](end_span)
+    * **Overall AAP Risk Category:** **{'WITH RISK FACTORS' if has_risk_factors else 'WITHOUT RISK FACTORS'}**[span_14](start_span)[span_14](end_span)
     """)
 
     with st.expander("➕ Add New SBR Result"):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"], datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]))
         with col_b:
             sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=150.0)
         with col_c:
@@ -518,7 +512,7 @@ with tab2:
                          (current_patient["mrn"], hours_life, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", val_umol, "umol/L"))
             conn.commit()
             conn.close()
-            st.success("SBR Reading added successfully!")
+            st.success("SBR Reading added and plotted successfully!")
             st.rerun()
 
     labs_df = current_patient["labs"]
@@ -534,9 +528,9 @@ with tab2:
             chart_data = bili_trend_df.set_index("time_hours")[["test_value"]]
             st.line_chart(chart_data)
         else:
-            st.info("لا توجد قراءات سابقة للبيليروبين مرسومة حتى الآن. أضف قراءة من الأعلى.")
+            st.info("No Bilirubin readings plotted yet.")
             
-        st.markdown("### سجل الفحوصات الكامل")
+        st.markdown("### Full Laboratory Record")
         st.dataframe(labs_df, use_container_width=True)
 
 with tab3:
@@ -562,7 +556,7 @@ with tab3:
             test_val = st.number_input("Test Value", value=0.0)
             test_unit = st.text_input("Unit (e.g. mmol/L, mg/dL, mIU/L)", value="")
 
-        test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"], datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]))
 
         if st.button("Save Lab Result"):
             conn = get_db_connection()
@@ -570,14 +564,14 @@ with tab3:
                          (current_patient["mrn"], test_hours, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), custom_test_name, test_val, test_unit))
             conn.commit()
             conn.close()
-            st.success(f"تم حفظ تحليل ({custom_test_name}) بنجاح!")
+            st.success(f"Lab result ({custom_test_name}) saved successfully!")
             st.rerun()
             
-    st.markdown("### جميع التحاليل والنتائج المسجلة للمريض:")
+    st.markdown("### All Recorded Laboratory Results:")
     if not current_patient["labs"].empty:
         st.dataframe(current_patient["labs"], use_container_width=True)
     else:
-        st.info("لا توجد تحاليل مسجلة لهذا المريض بعد.")
+        st.info("No labs recorded for this patient yet.")
 
 with tab4:
     st.subheader("💡 Clinical Zone Assessment & Recommendations")
@@ -627,6 +621,8 @@ Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
 Patient: {current_patient['baby_name']} (MRN: {current_patient['mrn']})
 Status: {current_patient['status']}
 GA: {current_patient['gestational_age']} | Weight: {current_patient['birth_weight']}
+Primary Physician: {current_patient['primary_physician']}
+Diagnosis: {current_patient['diagnosis']}
 Risk Factors: {current_patient['risk_factors']} | DAT: {current_patient['dat']}
 Latest SBR: {latest_sbr_txt}
 
@@ -636,14 +632,15 @@ Management Plan:
 Next Labs Due:
 {current_patient['next_labs_due']}"""
 
-    st.markdown("### معاينة التقرير القابل للطباعة والإرسال:")
+    st.markdown("### Report Preview (Print / Copy / WhatsApp):")
     st.code(handover_text, language="text")
     
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-        if st.button("🖨️ طباعة التقرير (Print Report)"):
+        if st.button("🖨️ Print Report (Save as PDF)"):
             st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
-            st.info("قم بالضغط على أمر الطباعة من المتصفح لحفظه كـ PDF أو طباعته.")
+            st.info("Use your browser's print dialog (Ctrl+P / Cmd+P) to print or save as PDF.")
     with col_p2:
         wa_url = f"https://wa.me/?text={urllib.parse.quote(handover_text)}"
-        st.markdown(f"[📲 إرسال الهاند أوفر عبر الواتساب (Send via WhatsApp)]({wa_url})", unsafe_allow_html=True)
+        st.markdown(f"[📲 Send Handover via WhatsApp]({wa_url})", unsafe_allow_html=True)
+
