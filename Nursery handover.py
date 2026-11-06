@@ -9,7 +9,7 @@ import numpy as np
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Sabry Vision - Newborn Nursery Digital Handover",
+    page_title="Sabry Vision - Neonatal Nursery Digital Logbook",
     page_icon="👶",
     layout="wide"
 )
@@ -234,7 +234,7 @@ st.title(f"👶 Sabry Vision - Neonatal Nursery Digital Logbook [{current_date_s
 
 mode_option = st.selectbox("🎛️ Select Operation Mode", ["Actual Nursery", "Demo Test Patient (Rich Data Version)"], key="main_mode_selectbox")
 
-# Populate Demo Patient with anonymous rich test data if Demo mode is selected
+# Populate Demo Patient ONLY if Demo mode is selected
 if "Demo" in mode_option:
     conn = get_db_connection()
     conn.execute(
@@ -280,7 +280,7 @@ if "Demo" in mode_option:
     conn.commit()
     conn.close()
 
-# Fetch patients from DB based on mode
+# Fetch patients strictly based on mode (Actual Nursery excludes '000000', Demo includes only '000000')
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 if "Demo" in mode_option:
@@ -1148,10 +1148,10 @@ with tab7:
     """
 
     st.markdown("### Report Preview (Professional Form Format):")
-    # تم التعديل هنا لعرض الـ HTML بشكل صحيح ومقروء وليس ككود نصي
     st.markdown(html_handover_report, unsafe_allow_html=True)
     
     st.markdown("---")
     if st.button("🖨️ Print Report / Save as PDF securely", key="tab7_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Click your browser or tablet print option and select 'Save as PDF' to securely save the formatted handover report.")
+
