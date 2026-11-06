@@ -48,7 +48,14 @@ def init_db() -> None:
             next_labs_due TEXT,
             primary_physician TEXT,
             diagnosis TEXT,
-            delivery_type TEXT
+            delivery_type TEXT,
+            cchd_status TEXT,
+            red_reflex_status TEXT,
+            hearing_status TEXT,
+            vit_k_status TEXT,
+            hepb_status TEXT,
+            rsv_status TEXT,
+            feeding_type TEXT
         )
     ''')
     cursor.execute('''
@@ -219,8 +226,8 @@ with col_demo1:
     if st.button("🚀 التشغيل على الوضع الافتراضي (Demo Test Patient)"):
         conn = get_db_connection()
         conn.execute(
-            "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O POS", "A POS", "Positive", "Preterm, ABO Incompatibility", "Still in Nursery", "", "Phototherapy initiated, IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM, ABO INCOMPATIBILITY, HYPERBILIRUBINEMIA", "SVD")
+            "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O POS", "A POS", "Positive", "Preterm, ABO Incompatibility", "Still in Nursery", "", "Phototherapy initiated, IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM, ABO INCOMPATIBILITY", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula")
         )
         conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 24.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "CRP", 1.9, "mg/L"))
         conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 53.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", 245.0, "umol/L"))
@@ -269,6 +276,13 @@ for p in db_patients:
         "primary_physician": p["primary_physician"],
         "diagnosis": p["diagnosis"],
         "delivery_type": p["delivery_type"],
+        "cchd_status": p["cchd_status"] if p["cchd_status"] else "Pending",
+        "red_reflex_status": p["red_reflex_status"] if p["red_reflex_status"] else "Pending",
+        "hearing_status": p["hearing_status"] if p["hearing_status"] else "Pending",
+        "vit_k_status": p["vit_k_status"] if p["vit_k_status"] else "Given",
+        "hepb_status": p["hepb_status"] if p["hepb_status"] else "Given",
+        "rsv_status": p["rsv_status"] if p["rsv_status"] else "Not Given",
+        "feeding_type": p["feeding_type"] if p["feeding_type"] else "Regular Formula",
         "labs": labs_df
     }
 
@@ -316,6 +330,27 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     with col_b3:
         dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0)
 
+    st.markdown("### 🍼 Feeding Type (نوع التغذية)")
+    new_feeding = st.selectbox("Feeding", ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"], index=0)
+
+    st.markdown("### 💉 Medications & Vaccines Status (فيتامين ك واللقاحات)")
+    col_v1, col_v2, col_v3 = st.columns(3)
+    with col_v1:
+        new_vit_k = st.selectbox("Vitamin K", ["Given", "Not Given"], index=0)
+    with col_v2:
+        new_hepb = st.selectbox("Hepatitis B Vaccine", ["Given", "Not Given"], index=0)
+    with col_v3:
+        new_rsv = st.selectbox("RSV Vaccine / Prophylaxis", ["Given", "Not Given"], index=1)
+
+    st.markdown("### 🔍 Neonatal Screening Tests (الفحوصات الإلزامية)")
+    col_sc1, col_sc2, col_sc3 = st.columns(3)
+    with col_sc1:
+        new_cchd = st.selectbox("CCHD Screening", ["Pending", "Pass", "Fail"], index=0)
+    with col_sc2:
+        new_red_reflex = st.selectbox("Red Reflex Test", ["Pending", "Pass", "Fail"], index=0)
+    with col_sc3:
+        new_hearing = st.selectbox("Hearing Screening", ["Pending", "Pass", "Fail"], index=0)
+
     risk_input = st.text_input("Risk Factors", value="Preterm, PROM 63 hrs")
     mgmt_plan = st.text_area("Management Plan / Medications", value="Cholecalciferol Vitamin D3 400 units oral Q24H for 30 days. Special formula milk Q2H.")
     next_labs = st.text_input("Next Labs Due", value="SBR Q12H")
@@ -324,8 +359,8 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
         if new_mrn:
             conn = get_db_connection()
             conn.execute(
-                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, mother_bg_val, baby_bg_val, dat_val, risk_input, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery)
+                "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, mother_bg_val, baby_bg_val, dat_val, risk_input, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery, new_cchd, new_red_reflex, new_hearing, new_vit_k, new_hepb, new_rsv, new_feeding)
             )
             conn.commit()
             conn.close()
@@ -384,16 +419,32 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.subheader(f"Hospital Crib Card Format & Patient Editing: {current_patient['baby_name']}")
     
-    with st.expander("✏️ Edit Patient Details & Crib Card Data"):
+    with st.expander("✏️ Edit Patient Details, Feeding & Vaccines"):
         edit_name = st.text_input("Edit Patient Name", value=current_patient["baby_name"])
         edit_diag = st.text_area("Edit Diagnosis", value=current_patient["diagnosis"])
         edit_mgmt = st.text_area("Edit Management Plan", value=current_patient["management_plan"])
         edit_labs = st.text_input("Edit Next Labs Due", value=current_patient["next_labs_due"])
         
+        st.markdown("**Feeding Type:**")
+        feed_opt = ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"]
+        edit_feeding = st.selectbox("Feeding", feed_opt, index=feed_opt.index(current_patient["feeding_type"]) if current_patient["feeding_type"] in feed_opt else 0)
+
+        st.markdown("**Vaccines & Medications Status:**")
+        v_opt = ["Given", "Not Given"]
+        edit_vit_k = st.selectbox("Vitamin K", v_opt, index=v_opt.index(current_patient["vit_k_status"]) if current_patient["vit_k_status"] in v_opt else 0)
+        edit_hepb = st.selectbox("Hepatitis B Vaccine", v_opt, index=v_opt.index(current_patient["hepb_status"]) if current_patient["hepb_status"] in v_opt else 0)
+        edit_rsv = st.selectbox("RSV Vaccine / Prophylaxis", v_opt, index=v_opt.index(current_patient["rsv_status"]) if current_patient["rsv_status"] in v_opt else 1)
+
+        st.markdown("**Screening Tests Status:**")
+        opt_list = ["Pending", "Pass", "Fail"]
+        edit_cchd = st.selectbox("CCHD Status", opt_list, index=opt_list.index(current_patient["cchd_status"]) if current_patient["cchd_status"] in opt_list else 0)
+        edit_red = st.selectbox("Red Reflex Status", opt_list, index=opt_list.index(current_patient["red_reflex_status"]) if current_patient["red_reflex_status"] in opt_list else 0)
+        edit_hearing = st.selectbox("Hearing Screening Status", opt_list, index=opt_list.index(current_patient["hearing_status"]) if current_patient["hearing_status"] in opt_list else 0)
+        
         if st.button("Save Patient Updates"):
             conn = get_db_connection()
-            conn.execute("UPDATE patients SET baby_name = ?, diagnosis = ?, management_plan = ?, next_labs_due = ? WHERE mrn = ?",
-                         (edit_name, edit_diag, edit_mgmt, edit_labs, current_patient["mrn"]))
+            conn.execute("UPDATE patients SET baby_name = ?, diagnosis = ?, management_plan = ?, next_labs_due = ?, cchd_status = ?, red_reflex_status = ?, hearing_status = ?, vit_k_status = ?, hepb_status = ?, rsv_status = ?, feeding_type = ? WHERE mrn = ?",
+                         (edit_name, edit_diag, edit_mgmt, edit_labs, edit_cchd, edit_red, edit_hearing, edit_vit_k, edit_hepb, edit_rsv, edit_feeding, current_patient["mrn"]))
             conn.commit()
             conn.close()
             st.success("تم تحديث بيانات المريض بنجاح!")
@@ -445,6 +496,26 @@ with tab1:
         st.metric("Mother Blood Group", current_patient["blood_group_mother"])
         st.metric("Baby Blood Group", current_patient["blood_group_baby"])
         st.metric("DAT Test", current_patient["dat"])
+
+    st.markdown("### 🍼 Feeding & Medications")
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        st.metric("Feeding Type", current_patient["feeding_type"])
+    with fc2:
+        st.metric("Vitamin K", current_patient["vit_k_status"])
+    with fc3:
+        st.metric("Hepatitis B", current_patient["hepb_status"])
+    with fc4:
+        st.metric("RSV Prophylaxis", current_patient["rsv_status"])
+
+    st.markdown("### 🔍 Screening Tests Results")
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1:
+        st.metric("CCHD Screening", current_patient["cchd_status"])
+    with sc2:
+        st.metric("Red Reflex Test", current_patient["red_reflex_status"])
+    with sc3:
+        st.metric("Hearing Screening", current_patient["hearing_status"])
 
     st.markdown("### 2. Background & Assessment")
     st.info(f"📝 **Diagnosis ({current_patient['delivery_type']}):**\n\n{current_patient['diagnosis']}\n\n**Management Plan:**\n{current_patient['management_plan']}")
@@ -642,6 +713,9 @@ GA: {current_patient['gestational_age']} | Weight: {current_patient['birth_weigh
 Treating Consultant: {current_patient['primary_physician']}
 Diagnosis ({current_patient['delivery_type']}): {current_patient['diagnosis']}
 Risk Factors: {current_patient['risk_factors']} | DAT: {current_patient['dat']}
+Feeding: {current_patient['feeding_type']}
+Medications & Vaccines: Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]
+Screening: CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]
 Latest SBR: {latest_sbr_txt}
 
 Management Plan:
@@ -656,3 +730,4 @@ Next Labs Due:
     if st.button("🖨️ Print Report (Save as PDF securely)"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Use your browser's print dialog (Ctrl+P / Cmd+P) to print or save as PDF securely.")
+
