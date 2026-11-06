@@ -58,8 +58,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS labs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mrn TEXT,
-            time_hours REAL,
-            datetime_str TEXT,
+            sample_datetime TEXT,
+            hours_elapsed REAL,
             test_name TEXT,
             test_value REAL,
             unit TEXT,
@@ -190,7 +190,7 @@ def convert_to_umol(val: float, unit: str) -> float:
         return val * 17.1
     return val
 
-def compute_hours_of_life(birth_dt_str: str) -> float:
+def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_min):
     try:
         dt_birth = None
         for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M", "%Y-%m-%d"]:
@@ -201,8 +201,10 @@ def compute_hours_of_life(birth_dt_str: str) -> float:
                 continue
         if not dt_birth:
             dt_birth = datetime.datetime.now() - datetime.timedelta(days=1)
-        diff = datetime.datetime.now() - dt_birth
-        return max(0.0, diff.total_seconds() / 3600.0)
+        
+        sample_dt = datetime.datetime.combine(sample_date, datetime.time(int(sample_hour), int(sample_min)))
+        diff = sample_dt - dt_birth
+        return round(max(0.0, diff.total_seconds() / 3600.0), 2)
     except Exception:
         return 24.0
 
@@ -219,18 +221,17 @@ if "Demo" in mode_option:
         "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O POS", "A POS", "Positive", "Preterm, ABO Incompatibility", "Still in Nursery", "", "Phototherapy initiated, IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM, ABO INCOMPATIBILITY", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula")
     )
-    conn.execute("INSERT OR IGNORE INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 24.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "CRP", 1.9, "mg/L"))
-    conn.execute("INSERT OR IGNORE INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 53.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", 245.0, "umol/L"))
+    conn.execute("INSERT OR IGNORE INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", str(datetime.datetime.now()), 24.0, "CRP", 1.9, "mg/L"))
+    conn.execute("INSERT OR IGNORE INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", str(datetime.datetime.now()), 53.0, "SBR", 245.0, "umol/L"))
     conn.commit()
     conn.close()
 
 # Fetch patients from DB based on mode
 conn = get_db_connection()
+patients_cursor = conn.cursor()
 if "Demo" in mode_option:
-    patients_cursor = conn.cursor()
     patients_cursor.execute("SELECT * FROM patients WHERE mrn = '000000'")
 else:
-    patients_cursor = conn.cursor()
     patients_cursor.execute("SELECT * FROM patients WHERE mrn != '000000'")
 db_patients = patients_cursor.fetchall()
 conn.close()
@@ -238,11 +239,11 @@ conn.close()
 patients_dict = {}
 for p in db_patients:
     conn = get_db_connection()
-    labs_df = pd.read_sql("SELECT * FROM labs WHERE mrn = ? ORDER BY time_hours ASC", conn, params=(p["mrn"],))
+    labs_df = pd.read_sql("SELECT * FROM labs WHERE mrn = ? ORDER BY hours_elapsed ASC", conn, params=(p["mrn"],))
     conn.close()
     
-    ga_w = p["ga_weeks"] if p["ga_weeks"] is not None else 35
-    ga_d = p["ga_days"] if p["ga_days"] is not None else 3
+    ga_w = p["ga_weeks"] if p["ga_weeks"] is not None else 38
+    ga_d = p["ga_days"] if p["ga_days"] is not None else 0
     
     patients_dict[p["mrn"]] = {
         "baby_name": p["baby_name"],
@@ -277,24 +278,24 @@ for p in db_patients:
 
 # --- Main Page: Add New Newborn (Manual Entry Hub) ---
 st.markdown("---")
-with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(patients_dict) == 0):
+with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(patients_dict) == 0 and "Actual" in mode_option):
     st.markdown("إدخال بيانات مولود جديد يدوياً بالكامل:")
     
     col_input1, col_input2 = st.columns(2)
     with col_input1:
-        new_mrn = st.text_input("Baby MRN", value="177000000808", key="main_new_mrn")
-        new_name = st.text_input("Patient Full Name", value="SON OF RASMIAH OBAID ALOTAIBI", key="main_new_name")
+        new_mrn = st.text_input("Baby MRN", value="", key="main_new_mrn")
+        new_name = st.text_input("Patient Full Name", value="", key="main_new_name")
         gender_val = st.selectbox("Gender", ["Male", "Female"], index=0, key="main_new_gender")
         
         st.markdown("Gestational Age (عمر الحمل)")
         col_ga1, col_ga2 = st.columns(2)
         with col_ga1:
-            new_ga_w = st.number_input("Weeks", min_value=24, max_value=44, value=35, key="main_new_gaw")
+            new_ga_w = st.number_input("Weeks", min_value=24, max_value=44, value=38, key="main_new_gaw")
         with col_ga2:
-            new_ga_d = st.number_input("Days", min_value=0, max_value=6, value=3, key="main_new_gad")
+            new_ga_d = st.number_input("Days", min_value=0, max_value=6, value=0, key="main_new_gad")
             
     with col_input2:
-        new_wt = st.number_input("Birth Weight (kg)", value=2.005, key="main_new_wt")
+        new_wt = st.number_input("Birth Weight (kg)", value=2.500, key="main_new_wt")
         
         consultant_options = [
             "Dr. Amany",
@@ -308,7 +309,7 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
         selected_cons = st.selectbox("Treating Consultant", consultant_options, index=2, key="main_new_cons")
         new_physician = st.text_input("Custom Consultant Name", value="DR IBRAHIM-0829", key="main_new_cname") if selected_cons == "Other" else selected_cons
         
-        new_diagnosis = st.text_input("Diagnosis", value="PRETERM, SVD, AGA", key="main_new_diag")
+        new_diagnosis = st.text_input("Diagnosis", value="", key="main_new_diag")
         new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA"], index=0, key="main_new_del")
 
     col_b1, col_b2, col_b3 = st.columns(3)
@@ -340,9 +341,9 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     with col_sc3:
         new_hearing = st.selectbox("Hearing Screening", ["Pending", "Pass", "Fail"], index=0, key="main_hearing")
 
-    risk_input = st.text_input("Risk Factors", value="Preterm, PROM 63 hrs", key="main_risk")
-    mgmt_plan = st.text_area("Management Plan / Medications", value="Cholecalciferol Vitamin D3 400 units oral Q24H for 30 days. Special formula milk Q2H.", key="main_mgmt")
-    next_labs = st.text_input("Next Labs Due", value="SBR Q12H", key="main_nlabs")
+    risk_input = st.text_input("Risk Factors", value="", key="main_risk")
+    mgmt_plan = st.text_area("Management Plan / Medications", value="", key="main_mgmt")
+    next_labs = st.text_input("Next Labs Due", value="", key="main_nlabs")
 
     if st.button("Create Manual Newborn Record", key="main_create_pat_btn"):
         if new_mrn:
@@ -355,6 +356,8 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
             conn.close()
             st.success("تم إضافة المريض بنجاح!")
             st.rerun()
+        else:
+            st.error("الرجاء إدخال رقم الملف الطبي (MRN).")
 
 st.markdown("---")
 
@@ -375,7 +378,7 @@ if not census_df.empty:
             if st.button(f"👶 {p_data['baby_name']}\nMRN: {mrn_val}\n[{p_data['status']}]", key=f"btn_pat_{mrn_val}"):
                 st.session_state['active_mrn'] = mrn_val
 else:
-    st.info("لا توجد حالات مسجلة حالياً.")
+    st.info("لا توجد حالات مسجلة حالياً في هذا الوضع.")
 
 default_mrn = list(patients_dict.keys())[0] if patients_dict else None
 if 'active_mrn' not in st.session_state or st.session_state['active_mrn'] not in patients_dict:
@@ -400,7 +403,7 @@ st.markdown(f"### 🩺 Active Patient Management: **{current_patient['baby_name'
 # --- Main Interface Tabs ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 Crib Card & Clinical Profile", 
-    "📈 Bilirubin Log & Trend Chart", 
+    "📈 Bilirubin Log", 
     "🧪 Cumulative Labs & Comparison", 
     "💡 Clinical Summary", 
     "📤 Shift Handover (Secure Internal & Print)"
@@ -512,36 +515,41 @@ with tab1:
     st.warning(f"⏰ **Next Labs Due:**\n\n{current_patient['next_labs_due']}")
 
 with tab2:
-    st.subheader("📈 Bilirubin Log & Trend Chart (سجل البيليروبين)")
+    st.subheader("📈 Bilirubin Log (سجل البيليروبين)")
 
     with st.expander("➕ Add New SBR Result"):
-        col_a, col_b, col_c = st.columns(3)
+        sample_date = st.date_input("Sample Date (تاريخ سحب العينة)", value=datetime.date.today(), key="tab2_sbr_date")
+        
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            sample_hour = st.number_input("Hour (الساعة 0-23)", min_value=0, max_value=23, value=12, key="tab2_sbr_hr")
+        with col_t2:
+            sample_min = st.number_input("Minute (الدقيقة 0-59)", min_value=0, max_value=59, value=0, key="tab2_sbr_min")
+            
+        col_a, col_b = st.columns(2)
         with col_a:
-            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=53.0, key="tab2_sbr_hof")
+            sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=200.0, key="tab2_sbr_val")
         with col_b:
-            sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=245.0, key="tab2_sbr_val")
-        with col_c:
             sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"], index=0, key="tab2_sbr_unit")
         
         if st.button("Add SBR Reading", key="tab2_add_sbr_btn"):
             val_umol = convert_to_umol(sbr_val, sbr_unit)
+            computed_hours = calculate_hours_from_parts(current_patient["birth_date"], sample_date, sample_hour, sample_min)
+            sample_dt_str = f"{sample_date} {str(sample_hour).zfill(2)}:{str(sample_min).zfill(2)}"
+            
             conn = get_db_connection()
-            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
-                         (current_patient["mrn"], hours_life, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", val_umol, "umol/L"))
+            conn.execute("INSERT INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                         (current_patient["mrn"], sample_dt_str, computed_hours, "SBR", val_umol, "umol/L"))
             conn.commit()
             conn.close()
-            st.success("SBR Reading added successfully!")
+            st.success(f"SBR Reading added successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
 
     labs_df = current_patient["labs"]
     if not labs_df.empty:
         bili_trend_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
         if not bili_trend_df.empty:
-            st.markdown("### 📊 Bilirubin Trend Plot")
-            chart_data = bili_trend_df.set_index("time_hours")[["test_value"]]
-            st.line_chart(chart_data)
-            
-            st.markdown("### 🔵 Patient Bilirubin Trend Table")
+            st.markdown("### 🔵 Patient Bilirubin Log Table")
             st.dataframe(bili_trend_df, use_container_width=True)
         else:
             st.info("No Bilirubin readings recorded yet.")
@@ -550,6 +558,13 @@ with tab3:
     st.subheader("🧪 Cumulative Laboratory Results & Comparison (التحاليل التراكمية)")
     
     with st.expander("➕ Add Any Laboratory Test"):
+        sample_date_gen = st.date_input("Sample Date (تاريخ سحب العينة)", value=datetime.date.today(), key="tab3_gen_date")
+        col_gt1, col_gt2 = st.columns(2)
+        with col_gt1:
+            sample_hour_gen = st.number_input("Hour (الساعة 0-23)", min_value=0, max_value=23, value=12, key="tab3_gen_hr")
+        with col_gt2:
+            sample_min_gen = st.number_input("Minute (الدقيقة 0-59)", min_value=0, max_value=59, value=0, key="tab3_gen_min")
+
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
             test_category = st.selectbox("Test Category", ["SBR (Bilirubin)", "CRP", "Calcium", "Creatinine", "CBC", "Thyroid (TSH)", "Electrolytes"], key="tab3_t_cat")
@@ -572,15 +587,16 @@ with tab3:
             test_val = st.number_input("Test Value", value=1.9, key="tab3_t_val")
             test_unit = st.text_input("Unit", value="mg/L", key="tab3_t_unit")
 
-        test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]), key="tab3_t_hours")
-
         if st.button("Save Lab Result", key="tab3_save_lab_btn"):
+            computed_hours = calculate_hours_from_parts(current_patient["birth_date"], sample_date_gen, sample_hour_gen, sample_min_gen)
+            sample_dt_str = f"{sample_date_gen} {str(sample_hour_gen).zfill(2)}:{str(sample_min_gen).zfill(2)}"
+            
             conn = get_db_connection()
-            conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
-                         (current_patient["mrn"], test_hours, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), custom_test_name, test_val, test_unit))
+            conn.execute("INSERT INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                         (current_patient["mrn"], sample_dt_str, computed_hours, custom_test_name, test_val, test_unit))
             conn.commit()
             conn.close()
-            st.success("Lab result saved successfully!")
+            st.success(f"Lab result saved successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
             
     st.markdown("### 📋 Cumulative Lab Records & Comparison Table")
@@ -605,7 +621,7 @@ with tab3:
         
         unique_tests = raw_labs_df["test_name"].unique()
         for t_name in unique_tests:
-            t_df = raw_labs_df[raw_labs_df["test_name"] == t_name].sort_values("time_hours").reset_index(drop=True)
+            t_df = raw_labs_df[raw_labs_df["test_name"] == t_name].sort_values("hours_elapsed").reset_index(drop=True)
             if len(t_df) > 0:
                 comparison_rows = []
                 prev_val = None
@@ -621,8 +637,8 @@ with tab3:
                         trend_status = "Stable (ثابت)"
                         
                     comparison_rows.append({
-                        "Hours of Life": row["time_hours"],
-                        "Datetime": row["datetime_str"],
+                        "Hours of Life": row["hours_elapsed"],
+                        "Sample Time": row["sample_datetime"],
                         "Test Name": row["test_name"],
                         "Value": curr_val,
                         "Unit": row["unit"],
@@ -643,7 +659,7 @@ with tab4:
     bili_labs = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])] if not labs_df.empty else pd.DataFrame()
     if not bili_labs.empty:
         latest_sbr = bili_labs.iloc[-1]["test_value"]
-        latest_hrs = bili_labs.iloc[-1]["time_hours"]
+        latest_hrs = bili_labs.iloc[-1]["hours_elapsed"]
         st.info(f"**Latest recorded SBR:** {round(latest_sbr, 1)} µmol/L at {latest_hrs} hours of life.")
     else:
         st.info("No SBR results recorded yet.")
@@ -661,7 +677,7 @@ with tab5:
         bili_row = current_patient["labs"][current_patient["labs"]["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
         if not bili_row.empty:
             r = bili_row.iloc[-1]
-            latest_sbr_txt = f"{r['test_value']} {r['unit']} at {r['time_hours']} hours"
+            latest_sbr_txt = f"{r['test_value']} {r['unit']} at {r['hours_elapsed']} hours"
         
     handover_text = f"""📋 NEONATAL NURSERY SHIFT HANDOVER LOG (INTERNAL)
 Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -688,3 +704,4 @@ Next Labs Due:
     if st.button("🖨️ Print Report (Save as PDF securely)", key="tab5_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Use your browser's print dialog (Ctrl+P / Cmd+P) to print or save as PDF securely.")
+
