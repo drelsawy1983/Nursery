@@ -14,12 +14,46 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Custom CSS for Compact Crib Card & Hospital Form Style ---
+# --- Custom CSS for Professional Handover Tables & Print Isolation ---
 st.markdown("""
 <style>
 .metric-container { font-size: 11px !important; }
 .pink-warning { background-color: #ffe6f2; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
-.handover-box { border: 2px solid #333; padding: 15px; border-radius: 5px; background-color: #fff; font-family: monospace; color: #000; }
+
+/* Print styling to isolate only the handover report */
+@media print {
+    body * {
+        visibility: hidden;
+    }
+    #printable-handover-area, #printable-handover-area * {
+        visibility: visible;
+    }
+    #printable-handover-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        background: white;
+    }
+}
+
+.handover-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 15px;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    color: #000;
+}
+.handover-table th, .handover-table td {
+    border: 1px solid #333;
+    padding: 6px 8px;
+    text-align: left;
+}
+.handover-table th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -147,6 +181,30 @@ def init_db() -> None:
 
 init_db()
 
+# --- Mandatory Legal Disclaimer State ---
+if "consented" not in st.session_state:
+    st.session_state.consented = False
+
+if not st.session_state.consented:
+    st.markdown("<h2 style='text-align: center; color: #cc0000;'>⚖️ LEGAL DISCLAIMER & TERMS OF USE</h2>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style='background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #ddd;'>
+    <p><b>By accessing and using the Sabry Vision Neonatal Nursery Logbook System, you acknowledge and agree that this software is strictly a digital logbook and handover tool for administrative and census tracking. The application designer, developer, and owner bear <u>ABSOLUTELY NO LIABILITY OR LEGAL RESPONSIBILITY</u> for any medical decisions, diagnostic errors, treatment outcomes, or data breaches resulting from the use of this system.</b></p>
+    <p><b>ALL RESPONSIBILITY RESTS SOLELY WITH THE USER.</b> The healthcare professional using this software is entirely responsible for verifying all clinical data, patient privacy compliance, treatment plans, and medical interventions.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.form("disclaimer_form"):
+        consent_check = st.selectbox("Do you confirm that you have read, understood, and agreed to all terms and instructions?", ["Select...", "Yes, I Agree & Accept", "No"], index=0)
+        disclaimer_submit = st.form_submit_button("Proceed to System")
+        if disclaimer_submit:
+            if consent_check == "Yes, I Agree & Accept":
+                st.session_state.consented = True
+                st.rerun()
+            else:
+                st.error("You must select 'Yes, I Agree & Accept' to enter the system.")
+    st.stop()
+
 # --- Helper Functions ---
 def convert_to_umol(val: float, unit: str) -> float:
     if unit and "mg" in unit.lower():
@@ -175,48 +233,48 @@ def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_mi
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery Digital Logbook [{current_date_str}]")
 
-mode_option = st.selectbox("🎛️ Select Operation Mode (اختر وضع التشغيل)", ["Actual Nursery (الحالات الفعلية)", "Demo Test Patient (النسخة الاختبارية الغنية بالبيانات)"], key="main_mode_selectbox")
+mode_option = st.selectbox("🎛️ Select Operation Mode", ["Actual Nursery", "Demo Test Patient (Rich Data Version)"], key="main_mode_selectbox")
 
-# Populate Demo Patient with rich test data if Demo mode is selected
+# Populate Demo Patient with anonymous rich test data if Demo mode is selected
 if "Demo" in mode_option:
     conn = get_db_connection()
     conn.execute(
         "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_abo, mother_rh, baby_abo, baby_rh, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type, prom_status, prom_hours, prom_mins, antibiotic_status, antibiotic_name, antibiotic_doses, antibiotic_treated, pethidine_status, pethidine_details, ctg_category, ctg_findings, hvs_status, hvs_organism, hvs_treated, gbs_status, gbs_site, gbs_treated, hypothyroid_status, thyroxine_status, thyroxine_dose, dm_status, dm_treatment, maternal_diseases, gravida, para, abortion, obs_history, family_history, echo_status, echo_result, echo_followup_months, consultation_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("177000000808", "SON OF RASMIAH OBAID ALOTAIBI", 35, 3, 2.005, "2026-10-30 19:20:00", "Male", "O", "NEG", "A", "POS", "Positive", "Preterm, SVD, AGA, Episode of cyanosis", "Still in Nursery", "", "Cholecalciferol, Vit A, IV fluids Q24H", "SBR Q12H", "Dr. IBRAHIM-0829", "PRETERM, SVD, AGA", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Special Formula Milk Q2HR - SIMILAC 24KCAL / TOLERATED - 15 TO 20 ML", "Yes", 63, 0, "Yes", "Ampicillin", 9, "Treated", "Yes", "100mg IV", "Category C", "Variable decelerations", "Yes", "E. coli", "Treated", "Yes", "in urine", "Treated", "Yes", "On Thyroxin", "50 mcg daily", "Gestational DM", "insulin", "Hypothyroidism, GDM", 3, 2, 1, "Previous IUFD at 28 weeks", "No family history of genetic disorders", "Requested before discharge", "Normal PDA closed, mild PFO", 6, "Orthopedic consultation")
+        ("000000", "SON OF ***", 35, 3, 2.005, "2026-10-30 19:20:00", "Male", "O", "NEG", "A", "POS", "Positive", "Preterm, SVD, AGA, Episode of cyanosis", "Still in Nursery", "", "Cholecalciferol, Vit A, IV fluids Q24H", "SBR Q12H", "Dr. Amany", "PRETERM, SVD, AGA", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Special Formula Milk Q2HR - SIMILAC 24KCAL / TOLERATED - 15 TO 20 ML", "Yes", 63, 0, "Yes", "Ampicillin", 9, "Treated", "Yes", "100mg IV", "Category C", "Variable decelerations", "Yes", "E. coli", "Treated", "Yes", "in urine", "Treated", "Yes", "On Thyroxin", "50 mcg daily", "Gestational DM", "insulin", "Hypothyroidism, GDM", 3, 2, 1, "Previous IUFD at 28 weeks", "No family history of genetic disorders", "Requested before discharge", "Normal PDA closed, mild PFO", 6, "Orthopedic consultation")
     )
-    conn.execute("DELETE FROM labs WHERE mrn = '177000000808'")
+    conn.execute("DELETE FROM labs WHERE mrn = '000000'")
     demo_labs = [
-        ("177000000808", "2026-10-31 10:00", 14.5, "SBR", 101.3, "umol/L"),
-        ("177000000808", "2026-10-31 22:00", 26.5, "SBR", 165.0, "umol/L"),
-        ("177000000808", "2026-11-01 15:00", 44.0, "SBR", 245.0, "umol/L"),
-        ("177000000808", "2026-10-31 12:00", 16.5, "CRP", 1.9, "mg/L"),
-        ("177000000808", "2026-11-01 09:00", 37.0, "CRP", 4.2, "mg/L"),
-        ("177000000808", "2026-10-31 12:00", 16.5, "Calcium", 2.1, "mmol/L"),
-        ("177000000808", "2026-11-01 09:00", 37.0, "Calcium", 1.9, "mmol/L"),
-        ("177000000808", "2026-11-02 08:00", 60.5, "Calcium", 2.3, "mmol/L"),
-        ("177000000808", "2026-10-31 12:00", 16.5, "Creatinine", 85.0, "umol/L"),
-        ("177000000808", "2026-11-01 09:00", 37.0, "Creatinine", 110.0, "umol/L"),
-        ("177000000808", "2026-11-02 08:00", 60.5, "Creatinine", 65.0, "umol/L"),
-        ("177000000808", "2026-10-31 12:00", 16.5, "TSH", 3.4, "mIU/L"),
-        ("177000000808", "2026-10-31 12:00", 16.5, "Blood Sugar", 3.8, "mmol/L")
+        ("000000", "2026-10-31 10:00", 14.5, "SBR", 101.3, "umol/L"),
+        ("000000", "2026-10-31 22:00", 26.5, "SBR", 165.0, "umol/L"),
+        ("000000", "2026-11-01 15:00", 44.0, "SBR", 245.0, "umol/L"),
+        ("000000", "2026-10-31 12:00", 16.5, "CRP", 1.9, "mg/L"),
+        ("000000", "2026-11-01 09:00", 37.0, "CRP", 4.2, "mg/L"),
+        ("000000", "2026-10-31 12:00", 16.5, "Calcium", 2.1, "mmol/L"),
+        ("000000", "2026-11-01 09:00", 37.0, "Calcium", 1.9, "mmol/L"),
+        ("000000", "2026-11-02 08:00", 60.5, "Calcium", 2.3, "mmol/L"),
+        ("000000", "2026-10-31 12:00", 16.5, "Creatinine", 85.0, "umol/L"),
+        ("000000", "2026-11-01 09:00", 37.0, "Creatinine", 110.0, "umol/L"),
+        ("000000", "2026-11-02 08:00", 60.5, "Creatinine", 65.0, "umol/L"),
+        ("000000", "2026-10-31 12:00", 16.5, "TSH", 3.4, "mIU/L"),
+        ("000000", "2026-10-31 12:00", 16.5, "Blood Sugar", 3.8, "mmol/L")
     ]
     conn.executemany("INSERT INTO labs (mrn, sample_datetime, hours_elapsed, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", demo_labs)
     
-    conn.execute("DELETE FROM imaging WHERE mrn = '177000000808'")
+    conn.execute("DELETE FROM imaging WHERE mrn = '000000'")
     demo_imgs = [
-        ("177000000808", "Ultrasound", "Cranial Ultrasound", "Normal ventricular system, no ICH or periventricular leukomalacia.", "2026-10-31"),
-        ("177000000808", "Ultrasound", "Abdomen Ultrasound", "Normal liver, spleen, and kidneys. No hydronephrosis.", "2026-10-31"),
-        ("177000000808", "X-Ray", "Chest X-Ray", "Clear lung fields, normal cardiothoracic ratio.", "2026-10-30"),
-        ("177000000808", "X-Ray", "X-Ray Clavicles", "Intact bilateral clavicles with no fractures.", "2026-10-30")
+        ("000000", "Ultrasound", "Cranial Ultrasound", "Normal ventricular system, no ICH or periventricular leukomalacia.", "2026-10-31"),
+        ("000000", "Ultrasound", "Abdomen Ultrasound", "Normal liver, spleen, and kidneys. No hydronephrosis.", "2026-10-31"),
+        ("000000", "X-Ray", "Chest X-Ray", "Clear lung fields, normal cardiothoracic ratio.", "2026-10-30"),
+        ("000000", "X-Ray", "X-Ray Clavicles", "Intact bilateral clavicles with no fractures.", "2026-10-30")
     ]
     conn.executemany("INSERT INTO imaging (mrn, img_type, img_name, img_result, img_date) VALUES (?, ?, ?, ?, ?)", demo_imgs)
 
-    conn.execute("DELETE FROM rbs_logs WHERE mrn = '177000000808'")
+    conn.execute("DELETE FROM rbs_logs WHERE mrn = '000000'")
     demo_rbs = [
-        ("177000000808", 3.8, "2026-10-30 19:40"),
-        ("177000000808", 4.2, "2026-10-30 22:00"),
-        ("177000000808", 4.5, "2026-10-31 06:00"),
-        ("177000000808", 4.1, "2026-10-31 12:00")
+        ("000000", 3.8, "2026-10-30 19:40"),
+        ("000000", 4.2, "2026-10-30 22:00"),
+        ("000000", 4.5, "2026-10-31 06:00"),
+        ("000000", 4.1, "2026-10-31 12:00")
     ]
     conn.executemany("INSERT INTO rbs_logs (mrn, rbs_val, rbs_time) VALUES (?, ?, ?)", demo_rbs)
 
@@ -227,9 +285,9 @@ if "Demo" in mode_option:
 conn = get_db_connection()
 patients_cursor = conn.cursor()
 if "Demo" in mode_option:
-    patients_cursor.execute("SELECT * FROM patients WHERE mrn = '177000000808'")
+    patients_cursor.execute("SELECT * FROM patients WHERE mrn = '000000'")
 else:
-    patients_cursor.execute("SELECT * FROM patients WHERE mrn != '177000000808'")
+    patients_cursor.execute("SELECT * FROM patients WHERE mrn != '000000'")
 db_patients = patients_cursor.fetchall()
 conn.close()
 
@@ -264,7 +322,7 @@ for p in db_patients:
         "discharge_notes": p["discharge_notes"],
         "management_plan": p["management_plan"],
         "next_labs_due": p["next_labs_due"],
-        "primary_physician": p["primary_physician"],
+        "primary_physician": p["primary_physician"] if p["primary_physician"] else "Dr. Amany",
         "diagnosis": p["diagnosis"],
         "delivery_type": p["delivery_type"],
         "cchd_status": p["cchd_status"] if p["cchd_status"] else "Pending",
@@ -314,15 +372,15 @@ for p in db_patients:
 # --- Main Page: Add New Newborn (Manual Entry Hub) ---
 st.markdown("---")
 with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(patients_dict) == 0 and "Actual" in mode_option):
-    st.markdown("إدخال بيانات مولود جديد والتاريخ الوالدي كاملاً:")
+    st.markdown("Enter new newborn details and maternal history:")
     
     col_input1, col_input2 = st.columns(2)
     with col_input1:
-        new_mrn = st.text_input("Baby MRN", value="", key="main_new_mrn")
-        new_name = st.text_input("Patient Full Name", value="", key="main_new_name")
+        new_mrn = st.text_input("Baby MRN", value="000000", key="main_new_mrn")
+        new_name = st.text_input("Patient Full Name", value="SON OF ***", key="main_new_name")
         gender_val = st.selectbox("Gender", ["Male", "Female"], index=0, key="main_new_gender")
         
-        st.markdown("Gestational Age (عمر الحمل)")
+        st.markdown("Gestational Age")
         col_ga1, col_ga2 = st.columns(2)
         with col_ga1:
             new_ga_w = st.number_input("Weeks", min_value=24, max_value=44, value=38, key="main_new_gaw")
@@ -336,8 +394,8 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
             "Dr. Amany", "Dr. Hosny", "Dr. Ibrahim BAHLAK",
             "Dr. Mahmoud El-Naggar", "Dr. NEMER", "Dr. Al-Thubaiti", "Other"
         ]
-        selected_cons = st.selectbox("Treating Consultant", consultant_options, index=2, key="main_new_cons")
-        new_physician = st.text_input("Custom Consultant Name", value="DR IBRAHIM-0829", key="main_new_cname") if selected_cons == "Other" else selected_cons
+        selected_cons = st.selectbox("Treating Consultant", consultant_options, index=0, key="main_new_cons")
+        new_physician = st.text_input("Custom Consultant Name", value="Dr. Amany", key="main_new_cname") if selected_cons == "Other" else selected_cons
         
         new_diagnosis = st.text_input("Diagnosis", value="", key="main_new_diag")
         new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA", "Ventouse Delivery", "CS with Assisted Forceps"], index=0, key="main_new_del")
@@ -355,7 +413,7 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0, key="main_dat")
 
     st.markdown("---")
-    st.markdown("### 📋 Booking & Obstetric History (تاريخ الحمل والولادة)")
+    st.markdown("### 📋 Booking & Obstetric History")
     col_ob1, col_ob2, col_ob3 = st.columns(3)
     with col_ob1:
         new_gravida = st.number_input("Gravida (G)", min_value=1, value=1, key="main_gravida")
@@ -368,7 +426,7 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     new_family_history = st.text_area("Family History", value="", key="main_fam_hist")
 
     st.markdown("---")
-    st.markdown("### ⚠️ Detailed Risk Factors & Maternal History (عوامل الخطر والتفاصيل الوالدية)")
+    st.markdown("### ⚠️ Detailed Risk Factors & Maternal History")
     
     col_rf1, col_rf2 = st.columns(2)
     with col_rf1:
@@ -416,8 +474,8 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
         hypo_status = st.selectbox("Hypothyroidism", ["No", "Yes"], index=0, key="main_hypo")
         thyrox_status, thyrox_dose = "No", ""
         if hypo_status == "Yes":
-            thyrox_status = st.selectbox("Thyroxin Status", ["On Thyroxin", "Without treatment", "No treatment"], key="main_thyrox")
-            thyrox_dose = st.text_input("Thyroxin Dose (mg / mcg)", value="", key="main_thyrox_dose")
+            thyrox_status = st.selectbox("Thyroxine Status", ["On Thyroxin", "Without treatment", "No treatment"], key="main_thyrox")
+            thyroxine_dose = st.text_input("Thyroxine Dose (mg / mcg)", value="", key="main_thyrox_dose")
             
     with col_m2:
         dm_status = st.selectbox("Maternal / Gestational Diabetes Mellitus", ["No", "Gestational DM", "Pre-existing DM"], index=0, key="main_dm")
@@ -460,10 +518,10 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
             )
             conn.commit()
             conn.close()
-            st.success("تم إضافة المريض بنجاح!")
+            st.success("Patient successfully added!")
             st.rerun()
         else:
-            st.error("الرجاء إدخال رقم الملف الطبي (MRN).")
+            st.error("Please enter Baby MRN.")
 
 st.markdown("---")
 
@@ -484,7 +542,7 @@ if not census_df.empty:
             if st.button(f"👶 {p_data['baby_name']}\nMRN: {mrn_val}\n[{p_data['status']}]", key=f"btn_pat_{mrn_val}"):
                 st.session_state['active_mrn'] = mrn_val
 else:
-    st.info("لا توجد حالات مسجلة حالياً في هذا الوضع.")
+    st.info("No records found in this mode.")
 
 default_mrn = list(patients_dict.keys())[0] if patients_dict else None
 if 'active_mrn' not in st.session_state or st.session_state['active_mrn'] not in patients_dict:
@@ -557,7 +615,7 @@ with tab1:
                          (edit_name, edit_diag, edit_mgmt, edit_labs, edit_m_abo, edit_m_rh, edit_b_abo, edit_b_rh, edit_dat, edit_cchd, edit_red, edit_hearing, edit_vit_k, edit_hepb, edit_rsv, edit_feeding, current_patient["mrn"]))
             conn.commit()
             conn.close()
-            st.success("تم تحديث بيانات المريض بنجاح!")
+            st.success("Patient details updated successfully!")
             st.rerun()
 
     status_options = ["Still in Nursery", "Discharged", "Transferred to NICU"]
@@ -647,7 +705,7 @@ with tab1:
     st.warning(f"⏰ **Next Labs Due:**\n\n{current_patient['next_labs_due']}")
 
 with tab2:
-    st.subheader("⚠️ Risk Factors, Obstetric & Maternal History (تعديل عوامل الخطر والتاريخ الوالدي)")
+    st.subheader("⚠️ Risk Factors, Obstetric & Maternal History")
     
     with st.form("edit_risk_history_form"):
         e_gravida = st.number_input("Gravida (G)", min_value=1, value=int(current_patient["gravida"]), key="eh_g")
@@ -697,19 +755,19 @@ with tab2:
                          (e_gravida, e_para, e_abortion, e_obs_hist, e_fam_hist, e_prom, e_prom_h, e_prom_m, e_ab_stat, e_ab_name, e_ab_doses, e_ab_treated, e_peth, e_peth_det, e_ctg_cat, e_ctg_find, e_hvs, e_hvs_org, e_hvs_tr, e_gbs, e_gbs_site, e_gbs_tr, e_hypo, e_thy_st, e_thy_dose, e_dm, e_dm_tr, e_mat_dis, current_patient["mrn"]))
             conn.commit()
             conn.close()
-            st.success("تم تحديث عوامل الخطر والتاريخ الوالدي بنجاح!")
+            st.success("Risk factors and history updated successfully!")
             st.rerun()
 
 with tab3:
-    st.subheader("📈 Bilirubin Log (سجل البيليروبين)")
+    st.subheader("📈 Bilirubin Log")
 
     with st.expander("➕ Add New SBR Result"):
-        sample_date = st.date_input("Sample Date (تاريخ سحب العينة)", value=datetime.date.today(), key="tab3_sbr_date")
+        sample_date = st.date_input("Sample Date", value=datetime.date.today(), key="tab3_sbr_date")
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            sample_hour = st.number_input("Hour (الساعة 0-23)", min_value=0, max_value=23, value=12, key="tab3_sbr_hr")
+            sample_hour = st.number_input("Hour (0-23)", min_value=0, max_value=23, value=12, key="tab3_sbr_hr")
         with col_t2:
-            sample_min = st.number_input("Minute (الدقيقة 0-59)", min_value=0, max_value=59, value=0, key="tab3_sbr_min")
+            sample_min = st.number_input("Minute (0-59)", min_value=0, max_value=59, value=0, key="tab3_sbr_min")
             
         col_a, col_b = st.columns(2)
         with col_a:
@@ -734,7 +792,7 @@ with tab3:
     if not labs_df.empty:
         bili_trend_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])]
         if not bili_trend_df.empty:
-            st.markdown("### 🔵 Patient Bilirubin Log Table (مع إمكانية الحذف)")
+            st.markdown("### 🔵 Patient Bilirubin Log Table")
             for idx, row in bili_trend_df.iterrows():
                 col_info, col_del = st.columns([5, 1])
                 with col_info:
@@ -745,21 +803,21 @@ with tab3:
                         conn.execute("DELETE FROM labs WHERE id = ?", (row['id'],))
                         conn.commit()
                         conn.close()
-                        st.success("تم حذف قراءة البيليروبين بنجاح!")
+                        st.success("Bilirubin reading deleted successfully!")
                         st.rerun()
         else:
             st.info("No Bilirubin readings recorded yet.")
 
 with tab4:
-    st.subheader("🧪 Cumulative Laboratory Results & Compare (التحاليل التراكمية ومقارنة التكرارات)")
+    st.subheader("🧪 Cumulative Laboratory Results & Compare")
     
     with st.expander("➕ Add Any Laboratory Test"):
-        sample_date_gen = st.date_input("Sample Date (تاريخ سحب العينة)", value=datetime.date.today(), key="tab4_gen_date")
+        sample_date_gen = st.date_input("Sample Date", value=datetime.date.today(), key="tab4_gen_date")
         col_gt1, col_gt2 = st.columns(2)
         with col_gt1:
-            sample_hour_gen = st.number_input("Hour (الساعة 0-23)", min_value=0, max_value=23, value=12, key="tab4_gen_hr")
+            sample_hour_gen = st.number_input("Hour (0-23)", min_value=0, max_value=23, value=12, key="tab4_gen_hr")
         with col_gt2:
-            sample_min_gen = st.number_input("Minute (الدقيقة 0-59)", min_value=0, max_value=59, value=0, key="tab4_gen_min")
+            sample_min_gen = st.number_input("Minute (0-59)", min_value=0, max_value=59, value=0, key="tab4_gen_min")
 
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
@@ -796,7 +854,7 @@ with tab4:
             st.rerun()
 
     # Compare repeated labs button feature
-    if st.button("📊 Compare Repeated Labs (مقارنة التحاليل المتكررة جنبًا إلى جنب)", key="compare_labs_btn"):
+    if st.button("📊 Compare Repeated Labs Side-by-Side", key="compare_labs_btn"):
         raw_labs_df = current_patient["labs"]
         if not raw_labs_df.empty:
             st.markdown("### 📈 Repeated Labs Comparison Report")
@@ -804,7 +862,7 @@ with tab4:
             repeated_tests = counts[counts > 1].index.tolist()
             if repeated_tests:
                 for t_name in repeated_tests:
-                    st.markdown(f"**🔬 Test: `{t_name}` (كرر {counts[t_name]} مرات)**")
+                    st.markdown(f"**🔬 Test: `{t_name}` (Repeated {counts[t_name]} times)**")
                     t_sub = raw_labs_df[raw_labs_df["test_name"] == t_name].sort_values("hours_elapsed")
                     comparison_list = []
                     prev_v = None
@@ -813,11 +871,11 @@ with tab4:
                         if prev_v is None:
                             trend = "Baseline"
                         elif curr_v > prev_v:
-                            trend = "📈 Increased (ارتفاع)"
+                            trend = "📈 Increased"
                         elif curr_v < prev_v:
-                            trend = "📉 Decreased (انخفاض)"
+                            trend = "📉 Decreased"
                         else:
-                            trend = "➡️ Stable (ثابت)"
+                            trend = "➡️ Stable"
                         comparison_list.append({
                             "Sample Time": r["sample_datetime"],
                             "Hours of Life": f"{r['hours_elapsed']}h",
@@ -827,9 +885,9 @@ with tab4:
                         prev_v = curr_v
                     st.dataframe(pd.DataFrame(comparison_list), use_container_width=True)
             else:
-                st.info("لا توجد تحاليل مكررة بأكثر من قياس واحد حالياً.")
+                st.info("No repeated laboratory tests found.")
         else:
-            st.info("لا توجد تحاليل مسجلة.")
+            st.info("No laboratory records found.")
             
     st.markdown("### 📋 Cumulative Lab Records & Delete Option")
     raw_labs_df = current_patient["labs"]
@@ -844,13 +902,13 @@ with tab4:
                     conn.execute("DELETE FROM labs WHERE id = ?", (row['id'],))
                     conn.commit()
                     conn.close()
-                    st.success("تم حذف التحليل بنجاح!")
+                    st.success("Lab record deleted successfully!")
                     st.rerun()
     else:
-        st.info("لا توجد تحاليل مسجلة.")
+        st.info("No lab records found.")
 
 with tab5:
-    st.subheader("📷 Ultrasound, X-Ray & Echo Results (سجل الأشعة والسونار والإيكو)")
+    st.subheader("📷 Ultrasound, X-Ray & Echo Results")
 
     with st.expander("➕ Add New Imaging / Echo Result"):
         img_category = st.selectbox("Category", ["Ultrasound", "X-Ray", "Echocardiography"], key="img_cat")
@@ -862,7 +920,7 @@ with tab5:
             img_name = "Echocardiography"
             
         img_date = st.date_input("Date", value=datetime.date.today(), key="img_date")
-        img_result = st.text_area("Result / Findings (النتيجة والتقرير)", value="", key="img_res")
+        img_result = st.text_area("Result / Findings", value="", key="img_res")
         
         if st.button("Save Imaging Result", key="save_img_btn"):
             if img_result:
@@ -871,10 +929,10 @@ with tab5:
                              (current_patient["mrn"], img_category, img_name, img_result, str(img_date)))
                 conn.commit()
                 conn.close()
-                st.success("تم حفظ التقرير بنجاح!")
+                st.success("Imaging report saved successfully!")
                 st.rerun()
             else:
-                st.error("الرجاء كتابة النتيجة.")
+                st.error("Please enter the result description.")
 
     # Echo Quick Editor Box
     with st.expander("💓 Edit Echocardiography Details", expanded=False):
@@ -889,12 +947,12 @@ with tab5:
             conn.execute("UPDATE patients SET echo_status=?, echo_result=?, echo_followup_months=? WHERE mrn=?", (up_echo_st, up_echo_res, up_echo_fu, current_patient["mrn"]))
             conn.commit()
             conn.close()
-            st.success("تم تحديث بيانات الإيكو بنجاح!")
+            st.success("Echocardiography details updated successfully!")
             st.rerun()
 
     img_df = current_patient["imaging"]
     if not img_df.empty:
-        st.markdown("### Recorded Imaging & Echo Reports (مع إمكانية الحذف):")
+        st.markdown("### Recorded Imaging & Echo Reports:")
         for idx, row in img_df.iterrows():
             col_i1, col_i2 = st.columns([5, 1])
             with col_i1:
@@ -905,13 +963,13 @@ with tab5:
                     conn.execute("DELETE FROM imaging WHERE id = ?", (row['id'],))
                     conn.commit()
                     conn.close()
-                    st.success("تم حذف الفحص بنجاح!")
+                    st.success("Imaging record deleted successfully!")
                     st.rerun()
     else:
-        st.info("لا توجد فحوصات أشعة أو إيكو مسجلة.")
+        st.info("No imaging or echo records found.")
 
 with tab6:
-    st.subheader("🩸 RBS Tracking (سجل سكر الدم العشوائي)")
+    st.subheader("🩸 RBS Tracking")
 
     with st.expander("➕ Add RBS Measurement"):
         rbs_val = st.number_input("RBS Value (mmol/L or mg/dL)", min_value=0.0, max_value=30.0, value=4.5, key="rbs_val_input")
@@ -926,12 +984,12 @@ with tab6:
                          (current_patient["mrn"], rbs_val, rbs_time_str))
             conn.commit()
             conn.close()
-            st.success("تم تسجيل قراءة الـ RBS بنجاح!")
+            st.success("RBS reading recorded successfully!")
             st.rerun()
 
     rbs_df = current_patient["rbs"]
     if not rbs_df.empty:
-        st.markdown("### Recorded RBS Logs (مع إمكانية الحذف):")
+        st.markdown("### Recorded RBS Logs:")
         for idx, row in rbs_df.iterrows():
             col_r1, col_r2 = st.columns([5, 1])
             with col_r1:
@@ -942,89 +1000,160 @@ with tab6:
                     conn.execute("DELETE FROM rbs_logs WHERE id = ?", (row['id'],))
                     conn.commit()
                     conn.close()
-                    st.success("تم حذف قراءة الـ RBS بنجاح!")
+                    st.success("RBS record deleted successfully!")
                     st.rerun()
     else:
-        st.info("لا توجد قراءات RBS مسجلة.")
+        st.info("No RBS records found.")
 
 with tab7:
-    st.subheader("📤 Shift Handover (Confidential Medical Form)")
+    st.subheader("📤 Shift Handover (Professional Confidential Medical Form)")
     
-    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية تماماً (Anonymize Patient Identity)", value=False, key="tab7_anon_checkbox")
+    anonymize_flag = st.checkbox("🔒 Anonymize Patient Identity", value=False, key="tab7_anon_checkbox")
     
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
     
-    # Gather labs summary text
-    labs_summary = ""
+    # Build HTML table structured report mimicking official handover sheet
+    labs_rows = ""
     if not current_patient["labs"].empty:
         for idx, r in current_patient["labs"].iterrows():
-            labs_summary += f"- {r['test_name']}: {r['test_value']} {r['unit']} at {r['sample_datetime']} ({r['hours_elapsed']}h)\n"
+            labs_rows += f"<tr><td>{r['sample_datetime']} ({r['hours_elapsed']}h)</td><td>{r['test_name']}</td><td>{r['test_value']} {r['unit']}</td></tr>"
     else:
-        labs_summary = "No labs recorded."
+        labs_rows = "<tr><td colspan='3'>No labs recorded.</td></tr>"
 
-    # Gather imaging summary text
-    img_summary = ""
+    img_rows = ""
     if not current_patient["imaging"].empty:
         for idx, r in current_patient["imaging"].iterrows():
-            img_summary += f"- [{r['img_type']}] {r['img_name']} ({r['img_date']}): {r['img_result']}\n"
+            img_rows += f"<tr><td>{r['img_date']}</td><td>{r['img_type']} - {r['img_name']}</td><td>{r['img_result']}</td></tr>"
     else:
-        img_summary = "No imaging recorded."
+        img_rows = "<tr><td colspan='3'>No imaging or echo recorded.</td></tr>"
 
-    handover_text = f"""==================================================
-NURSERY DEPARTMENT - SHIFT HANDOVER REPORT
-==================================================
-Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | Unit: NURSERY
+    html_handover_report = f"""
+    <div id="printable-handover-area" style="background-color: #ffffff; padding: 20px; border: 2px solid #000; color: #000;">
+        <h3 style="text-align: center; margin-bottom: 5px;">NURSERY DEPARTMENT - SHIFT HANDOVER REPORT</h3>
+        <p style="text-align: center; font-size: 11px; margin-top: 0;">Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | Unit: NURSERY</p>
+        
+        <table class="handover-table">
+            <tr>
+                <th colspan="4" style="background-color: #e6e6e6;">1. IDENTIFICATION & SITUATION</th>
+            </tr>
+            <tr>
+                <td><b>Patient Name:</b> {p_name}</td>
+                <td><b>MRN:</b> {p_mrn}</td>
+                <td><b>Gender:</b> {current_patient['gender']}</td>
+                <td><b>Gestational Age:</b> {current_patient['gestational_age']}</td>
+            </tr>
+            <tr>
+                <td><b>Birth Weight:</b> {current_patient['birth_weight']}</td>
+                <td><b>Birth Date/Time:</b> {current_patient['birth_date']}</td>
+                <td><b>Patient Status:</b> {current_patient['status']}</td>
+                <td><b>Consultant:</b> {current_patient['primary_physician']}</td>
+            </tr>
+            <tr>
+                <td colspan="2"><b>Diagnosis & Delivery:</b> {current_patient['diagnosis']} ({current_patient['delivery_type']})</td>
+                <td colspan="2"><b>Blood Groups:</b> Mother [{current_patient['mother_abo']} {current_patient['mother_rh']}] | Baby [{current_patient['baby_abo']} {current_patient['baby_rh']}] | DAT: [{current_patient['dat']}]</td>
+            </tr>
+        </table>
 
-[1. IDENTIFICATION & SITUATION]
-- Patient Full Name: {p_name}
-- MRN: {p_mrn}
-- Gender: {current_patient['gender']} | Gestational Age: {current_patient['gestational_age']}
-- Birth Weight: {current_patient['birth_weight']} | Birth Date/Time: {current_patient['birth_date']}
-- Patient Status: {current_patient['status']}
-- Diagnosis & Delivery: {current_patient['diagnosis']} ({current_patient['delivery_type']})
-- Treating Consultant: {current_patient['primary_physician']}
+        <table class="handover-table">
+            <tr>
+                <th colspan="2" style="background-color: #e6e6e6;">2. BACKGROUND & MATERNAL HISTORY</th>
+            </tr>
+            <tr>
+                <td><b>Booking & Obstetric:</b></td>
+                <td>Gravida [{current_patient['gravida']}], Para [{current_patient['para']}], Abortion [{current_patient['abortion']}]</td>
+            </tr>
+            <tr>
+                <td><b>Obstetric History:</b></td>
+                <td>{current_patient['obs_history'] or 'None'}</td>
+            </tr>
+            <tr>
+                <td><b>Family History:</b></td>
+                <td>{current_patient['family_history'] or 'None'}</td>
+            </tr>
+            <tr>
+                <td><b>Risk Factors:</b></td>
+                <td>
+                    - PROM: {current_patient['prom_status']} ({current_patient['prom_hours']}h {current_patient['prom_mins']}m)<br>
+                    - Antibiotic: {current_patient['antibiotic_status']} - {current_patient['antibiotic_name']} ({current_patient['antibiotic_doses']} doses, {current_patient['antibiotic_treated']})<br>
+                    - Pethidine: {current_patient['pethidine_status']} ({current_patient['pethidine_details']})<br>
+                    - CTG: {current_patient['ctg_category']} - {current_patient['ctg_findings']}<br>
+                    - HVS: {current_patient['hvs_status']} ({current_patient['hvs_organism']}, {current_patient['hvs_treated']})<br>
+                    - GBS: {current_patient['gbs_status']} ({current_patient['gbs_site']}, {current_patient['gbs_treated']})<br>
+                    - Hypothyroidism: {current_patient['hypothyroid_status']} ({current_patient['thyroxine_status']}, {current_patient['thyroxine_dose']})<br>
+                    - Diabetes Mellitus: {current_patient['dm_status']} ({current_patient['dm_treatment']})<br>
+                    - Other Maternal Diseases: {current_patient['maternal_diseases'] or 'None'}
+                </td>
+            </tr>
+        </table>
 
-[2. BACKGROUND & MATERNAL HISTORY]
-- Booking & Obstetric: Gravida {current_patient['gravida']}, Para {current_patient['para']}, Abortion {current_patient['abortion']}
-- Obstetric History: {current_patient['obs_history'] or 'None'}
-- Family History: {current_patient['family_history'] or 'None'}
-- Blood Groups: Mother [{current_patient['mother_abo']} {current_patient['mother_rh']}] | Baby [{current_patient['baby_abo']} {current_patient['baby_rh']}] | DAT: [{current_patient['dat']}]
-- Risk Factors:
-  * PROM: {current_patient['prom_status']} ({current_patient['prom_hours']}h {current_patient['prom_mins']}m)
-  * Antibiotic: {current_patient['antibiotic_status']} - {current_patient['antibiotic_name']} ({current_patient['antibiotic_doses']} doses, {current_patient['antibiotic_treated']})
-  * Pethidine: {current_patient['pethidine_status']} ({current_patient['pethidine_details']})
-  * CTG: {current_patient['ctg_category']} - {current_patient['ctg_findings']}
-  * HVS: {current_patient['hvs_status']} ({current_patient['hvs_organism']}, {current_patient['hvs_treated']})
-  * GBS: {current_patient['gbs_status']} ({current_patient['gbs_site']}, {current_patient['gbs_treated']})
-  * Hypothyroidism: {current_patient['hypothyroid_status']} ({current_patient['thyroxine_status']}, {current_patient['thyroxine_dose']})
-  * Diabetes Mellitus: {current_patient['dm_status']} ({current_patient['dm_treatment']})
-  * Other Diseases: {current_patient['maternal_diseases'] or 'None'}
+        <table class="handover-table">
+            <tr>
+                <th colspan="2" style="background-color: #e6e6e6;">3. ASSESSMENT, FEEDING & MEDICATIONS</th>
+            </tr>
+            <tr>
+                <td><b>Feeding Type:</b></td>
+                <td>{current_patient['feeding_type']}</td>
+            </tr>
+            <tr>
+                <td><b>Medications & Vaccines:</b></td>
+                <td>Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]</td>
+            </tr>
+            <tr>
+                <td><b>Screening Tests:</b></td>
+                <td>CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]</td>
+            </tr>
+            <tr>
+                <td><b>Management Plan:</b></td>
+                <td>{current_patient['management_plan']}</td>
+            </tr>
+        </table>
 
-[3. ASSESSMENT, FEEDING & MEDICATIONS]
-- Feeding Type: {current_patient['feeding_type']}
-- Medications & Vaccines: Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]
-- Screening Tests: CCHD [{current_patient['cchd_status']}] | Red Reflex [{current_patient['red_reflex_status']}] | Hearing [{current_patient['hearing_status']}]
-- Management Plan / Medications:
-{current_patient['management_plan']}
+        <table class="handover-table">
+            <tr>
+                <th colspan="3" style="background-color: #e6e6e6;">4. CUMULATIVE LABORATORY RESULTS</th>
+            </tr>
+            <tr>
+                <th>Sample Time</th>
+                <th>Test Name</th>
+                <th>Result & Unit</th>
+            </tr>
+            {labs_rows}
+        </table>
 
-[4. LABORATORY RESULTS (CUMULATIVE)]
-{labs_summary}
+        <table class="handover-table">
+            <tr>
+                <th colspan="3" style="background-color: #e6e6e6;">5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY</th>
+            </tr>
+            <tr>
+                <td colspan="3"><b>Echocardiography Status:</b> {current_patient['echo_status'] or 'Not requested'}<br>
+                <b>Echo Result:</b> {current_patient['echo_result'] or 'N/A'} (Follow-up: {current_patient['echo_followup_months']} months)<br>
+                <b>Consultations:</b> {current_patient['consultation_type'] or 'None'}</td>
+            </tr>
+            <tr>
+                <th>Date</th>
+                <th>Imaging Type</th>
+                <th>Findings / Result</th>
+            </tr>
+            {img_rows}
+        </table>
 
-[5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY]
-- Echocardiography Status: {current_patient['echo_status'] or 'Not requested'}
-- Echo Result: {current_patient['echo_result'] or 'N/A'} (Follow-up: {current_patient['echo_followup_months']} months)
-- Consultations: {current_patient['consultation_type'] or 'None'}
-- Other Imaging Reports:
-{img_summary}
+        <table class="handover-table">
+            <tr>
+                <th>6. NEXT LABS DUE</th>
+            </tr>
+            <tr>
+                <td>{current_patient['next_labs_due']}</td>
+            </tr>
+        </table>
+    </div>
+    """
 
-[6. NEXT LABS DUE]
-{current_patient['next_labs_due']}
-=================================================="""
-
-    st.markdown("### Report Preview (Confidential Format):")
-    st.markdown(f'<div class="handover-box"><pre>{handover_text}</pre></div>', unsafe_allow_html=True)
+    st.markdown("### Report Preview (Professional Form Format):")
+    st.markdown(html_handover_report, unsafe_allow_html=True)
     
+    st.markdown("---")
     if st.button("🖨️ Print Report / Save as PDF securely", key="tab7_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
-        st.info("اضغط على زر الطباعة في متصفحك أو تابلتك، ثم اختر 'Save as PDF' لحفظ التقرير كملف PDF بكل سهولة.")
+        st.info("Click your browser or tablet print option and select 'Save as PDF' to securely save the formatted handover report.")
+
