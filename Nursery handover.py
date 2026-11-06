@@ -9,7 +9,7 @@ import numpy as np
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Sabry Vision - Neonatal Nursery Digital Handover",
+    page_title="Sabry Vision - Newborn Nursery Digital Handover",
     page_icon="👶",
     layout="wide"
 )
