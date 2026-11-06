@@ -9,14 +9,10 @@ import numpy as np
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Sabry Vision - Neonatal Nursery System (Secure & Comprehensive)",
+    page_title="Sabry Vision - Neonatal Nursery System (Secure & Legal Protected)",
     page_icon="👶",
     layout="wide"
 )
-
-# --- Permanent Medical Disclaimer & Privacy Notice ---
-st.warning("⚠️ **MEDICAL DISCLAIMER:** Decision-support tool only. Verify all calculations and decisions against the official AAP 2022 nomogram (Kemper et al., Pediatrics) and the treating physician's clinical judgment.")
-st.info("🔒 **Privacy & Data Notice:** Closed internal nursery environment. Patient data, custom references, and logs are secured locally with anonymization controls.")
 
 # --- Database & Persistence Setup (SQLite) ---
 DB_NAME = "neonatal_nursery.db"
@@ -78,66 +74,74 @@ def init_db() -> None:
             unit TEXT
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT,
+            role TEXT,
+            full_name TEXT,
+            national_id TEXT
+        )
+    ''')
+    # Default admin user if not exists
+    cursor.execute("SELECT * FROM users WHERE username = 'admin'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
+                       ("admin", "admin", "admin", "System Administrator", "0000000000"))
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- Custom References Management in Sidebar ---
-with st.sidebar:
-    st.markdown("### ⚙️ Hospital Reference Ranges")
-    st.markdown("قم بتعديل أو إدخال المعدلات الطبيعية المعتمدة:")
-    
-    with st.expander("🛠️ Edit Lab References"):
-        ref_test = st.selectbox("Select Test to Configure", ["Calcium", "Creatinine", "SBR", "Cord TSH", "Baby TSH", "Hemoglobin", "Platelets", "Sodium", "Potassium", "CRP"])
-        ref_min = st.number_input("Min Normal Value", value=2.1)
-        ref_max = st.number_input("Max Normal Value", value=2.6)
-        ref_unit = st.text_input("Unit", value="mmol/L")
-        
-        if st.button("Save Custom Reference"):
-            conn = get_db_connection()
-            conn.execute("INSERT OR REPLACE INTO custom_references (test_name, min_val, max_val, unit) VALUES (?, ?, ?, ?)",
-                         (ref_test, ref_min, ref_max, ref_unit))
-            conn.commit()
-            conn.close()
-            st.success(f"Reference for {ref_test} saved!")
+# --- Legal Consent & Disclaimer State ---
+if "consented" not in st.session_state:
+    st.session_state.consented = False
 
-def get_reference(test_name: str) -> str:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT min_val, max_val, unit FROM custom_references WHERE test_name = ?", (test_name,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return f"{row['min_val']} - {row['max_val']} {row['unit']}"
-    return "Standard Neonatal Range"
+if not st.session_state.consented:
+    st.markdown("<h2 style='text-align: center; color: #cc0000;'>⚖️ LEGAL DISCLAIMER & TERMS OF USE</h2>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style='background-color: #f9f9f9; padding: 20px; border-radius: 10px; border: 1px solid #ddd;'>
+    <p><b>By accessing and using the Sabry Vision Neonatal Nursery System, you acknowledge and agree that this software is strictly a clinical decision-support and educational tool. The application designer, developer, and owner bear <u>ABSOLUTELY NO LIABILITY OR LEGAL RESPONSIBILITY</u> for any medical decisions, diagnostic errors, treatment outcomes, or data breaches resulting from the use of this system.</b></p>
+    <p><b>ALL RESPONSIBILITY RESTS SOLELY WITH THE USER.</b> The healthcare professional using this software is entirely responsible for verifying all clinical data, patient privacy compliance, treatment plans, and medical interventions. By clicking "I Agree", you waive any right to legal claims against the designer or owner of this application.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if st.button("I Agree & Enter System (أوافق وأدخل النظام)"):
+        st.session_state.consented = True
+        st.rerun()
+    st.stop()
 
 # --- Authentication & Role-Based Access Control ---
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
+    if "username" not in st.session_state:
+        st.session_state.username = None
     if "role" not in st.session_state:
         st.session_state.role = None
-    if "login_time" not in st.session_state:
-        st.session_state.login_time = None
 
     if st.session_state.authenticated:
-        if st.session_state.role in ["admin", "user"]:
-            return True
+        return True
 
     st.markdown("<h2 style='text-align: center;'>🔐 Login - Sabry Vision Neonatal System</h2>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("login_form"):
-            username = st.text_input("Username (admin / user)")
-            password = st.text_input("Password", type="password")
+            username_input = st.text_input("Username")
+            password_input = st.text_input("Password", type="password")
             submit_btn = st.form_submit_button("Login")
             
             if submit_btn:
-                if (username == "admin" and password == "admin") or (username == "user" and password == "user"):
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username_input, password_input))
+                user = cursor.fetchone()
+                conn.close()
+                
+                if user:
                     st.session_state.authenticated = True
-                    st.session_state.role = username
-                    st.session_state.login_time = datetime.datetime.now()
+                    st.session_state.username = user["username"]
+                    st.session_state.role = user["role"]
                     st.success("Logged in successfully!")
                     st.rerun()
                 else:
@@ -148,12 +152,33 @@ if not check_password():
     st.stop()
 
 with st.sidebar:
-    st.write(f"👤 Current User: **{st.session_state.role.upper()}**")
-    if st.button("Logout"):
+    st.write(f"👤 User: **{st.session_state.username}** ({st.session_state.role.upper()})")
+    if st.button("Logout", key="sidebar_logout_btn"):
         st.session_state.authenticated = False
+        st.session_state.username = None
         st.session_state.role = None
         st.rerun()
     st.markdown("---")
+    
+    # Admin User Management Panel in Sidebar
+    if st.session_state.role == "admin":
+        with st.expander("👑 Admin User Management"):
+            new_u = st.text_input("New Username", key="admin_new_u")
+            new_p = st.text_input("New Password", type="password", key="admin_new_p")
+            new_role = st.selectbox("Role", ["user", "admin"], key="admin_new_role")
+            new_name = st.text_input("Full Name", key="admin_new_name")
+            new_nid = st.text_input("National ID / Employee ID", key="admin_new_nid")
+            
+            if st.button("Create / Update User", key="admin_create_user_btn"):
+                if new_u and new_p:
+                    conn = get_db_connection()
+                    conn.execute("INSERT OR REPLACE INTO users (username, password, role, full_name, national_id) VALUES (?, ?, ?, ?, ?)",
+                                 (new_u, new_p, new_role, new_name, new_nid))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"User {new_u} saved successfully!")
+                else:
+                    st.error("Please enter username and password.")
 
 # --- Clinical Logic Helper Functions ---
 def parse_blood_group(bg_str: str) -> tuple:
@@ -220,29 +245,29 @@ def get_aap_thresholds(ga_weeks: float, hours: float, has_risk: bool) -> tuple:
 current_date_str = datetime.date.today().strftime("%Y-%m-%d")
 st.title(f"👶 Sabry Vision - Neonatal Nursery System [{current_date_str}]")
 
-# Quick Demo Test Patient Button
-col_demo1, col_demo2 = st.columns([2, 5])
-with col_demo1:
-    if st.button("🚀 التشغيل على الوضع الافتراضي (Demo Test Patient)"):
-        conn = get_db_connection()
-        conn.execute(
-            "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O POS", "A POS", "Positive", "Preterm, ABO Incompatibility", "Still in Nursery", "", "Phototherapy initiated, IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM, ABO INCOMPATIBILITY", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula")
-        )
-        conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 24.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "CRP", 1.9, "mg/L"))
-        conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 53.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", 245.0, "umol/L"))
-        conn.commit()
-        conn.close()
-        st.success("تم إنشاء المريض الافتراضي بنجاح!")
-        st.rerun()
+# Mode Selector Dropdown in Main Interface
+mode_option = st.selectbox("🎛️ Select Operation Mode (اختر وضع التشغيل)", ["Actual Nursery (الحالات الفعلية)", "Demo Test Patient (الوضع الافتراضي للتجربة)"], key="main_mode_selectbox")
 
-with col_demo2:
-    st.markdown("### 🏥 Nursery - Active Census")
+if "Demo" in mode_option:
+    # Auto load/ensure demo patient
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_bg, baby_bg, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("000000", "SON OF ...", 35, 3, 2.005, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Male", "O POS", "A POS", "Positive", "Preterm, ABO Incompatibility", "Still in Nursery", "", "Phototherapy initiated, IV fluids", "SBR Q12H", "Dr. Ibrahim BAHLAK", "PRETERM, ABO INCOMPATIBILITY", "SVD", "Pass", "Pass", "Pending", "Given", "Given", "Not Given", "Regular Formula")
+    )
+    conn.execute("INSERT OR IGNORE INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 24.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "CRP", 1.9, "mg/L"))
+    conn.execute("INSERT OR IGNORE INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)", ("000000", 53.0, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "SBR", 245.0, "umol/L"))
+    conn.commit()
+    conn.close()
 
-# Fetch patients from DB
+# Fetch patients from DB based on mode
 conn = get_db_connection()
-patients_cursor = conn.cursor()
-patients_cursor.execute("SELECT * FROM patients")
+if "Demo" in mode_option:
+    patients_cursor = conn.cursor()
+    patients_cursor.execute("SELECT * FROM patients WHERE mrn = '000000'")
+else:
+    patients_cursor = conn.cursor()
+    patients_cursor.execute("SELECT * FROM patients WHERE mrn != '000000'")
 db_patients = patients_cursor.fetchall()
 conn.close()
 
@@ -293,19 +318,19 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
     
     col_input1, col_input2 = st.columns(2)
     with col_input1:
-        new_mrn = st.text_input("Baby MRN", value="177000000808")
-        new_name = st.text_input("Patient Full Name", value="SON OF RASMIAH OBAID ALOTAIBI")
-        gender_val = st.selectbox("Gender", ["Male", "Female"], index=0)
+        new_mrn = st.text_input("Baby MRN", value="177000000808", key="main_new_mrn")
+        new_name = st.text_input("Patient Full Name", value="SON OF RASMIAH OBAID ALOTAIBI", key="main_new_name")
+        gender_val = st.selectbox("Gender", ["Male", "Female"], index=0, key="main_new_gender")
         
         st.markdown("Gestational Age (عمر الحمل)")
         col_ga1, col_ga2 = st.columns(2)
         with col_ga1:
-            new_ga_w = st.number_input("Weeks", min_value=24, max_value=44, value=35)
+            new_ga_w = st.number_input("Weeks", min_value=24, max_value=44, value=35, key="main_new_gaw")
         with col_ga2:
-            new_ga_d = st.number_input("Days", min_value=0, max_value=6, value=3)
+            new_ga_d = st.number_input("Days", min_value=0, max_value=6, value=3, key="main_new_gad")
             
     with col_input2:
-        new_wt = st.number_input("Birth Weight (kg)", value=2.005)
+        new_wt = st.number_input("Birth Weight (kg)", value=2.005, key="main_new_wt")
         
         consultant_options = [
             "Dr. Amany",
@@ -316,46 +341,46 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
             "Dr. Al-Thubaiti",
             "Other"
         ]
-        selected_cons = st.selectbox("Treating Consultant", consultant_options, index=2)
-        new_physician = st.text_input("Custom Consultant Name", value="DR IBRAHIM-0829") if selected_cons == "Other" else selected_cons
+        selected_cons = st.selectbox("Treating Consultant", consultant_options, index=2, key="main_new_cons")
+        new_physician = st.text_input("Custom Consultant Name", value="DR IBRAHIM-0829", key="main_new_cname") if selected_cons == "Other" else selected_cons
         
-        new_diagnosis = st.text_input("Diagnosis (افتراضي PPROM)", value="PPROM")
-        new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA"], index=0)
+        new_diagnosis = st.text_input("Diagnosis", value="PRETERM, SVD, AGA", key="main_new_diag")
+        new_delivery = st.selectbox("Delivery Type", ["SVD", "CS", "BBA"], index=0, key="main_new_del")
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
-        mother_bg_val = st.selectbox("Mother Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0)
+        mother_bg_val = st.selectbox("Mother Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0, key="main_mbg")
     with col_b2:
-        baby_bg_val = st.selectbox("Baby Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0)
+        baby_bg_val = st.selectbox("Baby Blood Group", ["A POS", "A NEG", "B POS", "B NEG", "AB POS", "AB NEG", "O POS", "O NEG"], index=0, key="main_bbg")
     with col_b3:
-        dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0)
+        dat_val = st.selectbox("DAT Test", ["Negative", "Positive"], index=0, key="main_dat")
 
     st.markdown("### 🍼 Feeding Type (نوع التغذية)")
-    new_feeding = st.selectbox("Feeding", ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"], index=0)
+    new_feeding = st.selectbox("Feeding", ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"], index=0, key="main_feed")
 
-    st.markdown("### 💉 Medications & Vaccines Status (فيتامين ك واللقاحات)")
+    st.markdown("### 💉 Medications & Vaccines Status")
     col_v1, col_v2, col_v3 = st.columns(3)
     with col_v1:
-        new_vit_k = st.selectbox("Vitamin K", ["Given", "Not Given"], index=0)
+        new_vit_k = st.selectbox("Vitamin K", ["Given", "Not Given"], index=0, key="main_vitk")
     with col_v2:
-        new_hepb = st.selectbox("Hepatitis B Vaccine", ["Given", "Not Given"], index=0)
+        new_hepb = st.selectbox("Hepatitis B Vaccine", ["Given", "Not Given"], index=0, key="main_hepb")
     with col_v3:
-        new_rsv = st.selectbox("RSV Vaccine / Prophylaxis", ["Given", "Not Given"], index=1)
+        new_rsv = st.selectbox("RSV Vaccine / Prophylaxis", ["Given", "Not Given"], index=1, key="main_rsv")
 
-    st.markdown("### 🔍 Neonatal Screening Tests (الفحوصات الإلزامية)")
+    st.markdown("### 🔍 Neonatal Screening Tests")
     col_sc1, col_sc2, col_sc3 = st.columns(3)
     with col_sc1:
-        new_cchd = st.selectbox("CCHD Screening", ["Pending", "Pass", "Fail"], index=0)
+        new_cchd = st.selectbox("CCHD Screening", ["Pending", "Pass", "Fail"], index=0, key="main_cchd")
     with col_sc2:
-        new_red_reflex = st.selectbox("Red Reflex Test", ["Pending", "Pass", "Fail"], index=0)
+        new_red_reflex = st.selectbox("Red Reflex Test", ["Pending", "Pass", "Fail"], index=0, key="main_red")
     with col_sc3:
-        new_hearing = st.selectbox("Hearing Screening", ["Pending", "Pass", "Fail"], index=0)
+        new_hearing = st.selectbox("Hearing Screening", ["Pending", "Pass", "Fail"], index=0, key="main_hearing")
 
-    risk_input = st.text_input("Risk Factors", value="Preterm, PROM 63 hrs")
-    mgmt_plan = st.text_area("Management Plan / Medications", value="Cholecalciferol Vitamin D3 400 units oral Q24H for 30 days. Special formula milk Q2H.")
-    next_labs = st.text_input("Next Labs Due", value="SBR Q12H")
+    risk_input = st.text_input("Risk Factors", value="Preterm, PROM 63 hrs", key="main_risk")
+    mgmt_plan = st.text_area("Management Plan / Medications", value="Cholecalciferol Vitamin D3 400 units oral Q24H for 30 days. Special formula milk Q2H.", key="main_mgmt")
+    next_labs = st.text_input("Next Labs Due", value="SBR Q12H", key="main_nlabs")
 
-    if st.button("Create Manual Newborn Record"):
+    if st.button("Create Manual Newborn Record", key="main_create_pat_btn"):
         if new_mrn:
             conn = get_db_connection()
             conn.execute(
@@ -399,7 +424,8 @@ selected_mrn = st.sidebar.selectbox(
     "Select Active Patient:",
     list(patients_dict.keys()),
     index=list(patients_dict.keys()).index(st.session_state['active_mrn']) if st.session_state['active_mrn'] in patients_dict else 0,
-    format_func=lambda x: f"{patients_dict[x]['baby_name']} (MRN: {x}) [{patients_dict[x]['status']}]"
+    format_func=lambda x: f"{patients_dict[x]['baby_name']} (MRN: {x}) [{patients_dict[x]['status']}]",
+    key="sidebar_active_patient_select"
 )
 st.session_state['active_mrn'] = selected_mrn
 current_patient = patients_dict[selected_mrn]
@@ -420,28 +446,28 @@ with tab1:
     st.subheader(f"Hospital Crib Card Format & Patient Editing: {current_patient['baby_name']}")
     
     with st.expander("✏️ Edit Patient Details, Feeding & Vaccines"):
-        edit_name = st.text_input("Edit Patient Name", value=current_patient["baby_name"])
-        edit_diag = st.text_area("Edit Diagnosis", value=current_patient["diagnosis"])
-        edit_mgmt = st.text_area("Edit Management Plan", value=current_patient["management_plan"])
-        edit_labs = st.text_input("Edit Next Labs Due", value=current_patient["next_labs_due"])
+        edit_name = st.text_input("Edit Patient Name", value=current_patient["baby_name"], key="tab1_edit_name")
+        edit_diag = st.text_area("Edit Diagnosis", value=current_patient["diagnosis"], key="tab1_edit_diag")
+        edit_mgmt = st.text_area("Edit Management Plan", value=current_patient["management_plan"], key="tab1_edit_mgmt")
+        edit_labs = st.text_input("Edit Next Labs Due", value=current_patient["next_labs_due"], key="tab1_edit_labs")
         
         st.markdown("**Feeding Type:**")
         feed_opt = ["Regular Formula", "AR Formula", "Exclusive Breastfeeding"]
-        edit_feeding = st.selectbox("Feeding", feed_opt, index=feed_opt.index(current_patient["feeding_type"]) if current_patient["feeding_type"] in feed_opt else 0)
+        edit_feeding = st.selectbox("Feeding", feed_opt, index=feed_opt.index(current_patient["feeding_type"]) if current_patient["feeding_type"] in feed_opt else 0, key="tab1_edit_feed")
 
         st.markdown("**Vaccines & Medications Status:**")
         v_opt = ["Given", "Not Given"]
-        edit_vit_k = st.selectbox("Vitamin K", v_opt, index=v_opt.index(current_patient["vit_k_status"]) if current_patient["vit_k_status"] in v_opt else 0)
-        edit_hepb = st.selectbox("Hepatitis B Vaccine", v_opt, index=v_opt.index(current_patient["hepb_status"]) if current_patient["hepb_status"] in v_opt else 0)
-        edit_rsv = st.selectbox("RSV Vaccine / Prophylaxis", v_opt, index=v_opt.index(current_patient["rsv_status"]) if current_patient["rsv_status"] in v_opt else 1)
+        edit_vit_k = st.selectbox("Vitamin K", v_opt, index=v_opt.index(current_patient["vit_k_status"]) if current_patient["vit_k_status"] in v_opt else 0, key="tab1_edit_vitk")
+        edit_hepb = st.selectbox("Hepatitis B Vaccine", v_opt, index=v_opt.index(current_patient["hepb_status"]) if current_patient["hepb_status"] in v_opt else 0, key="tab1_edit_hepb")
+        edit_rsv = st.selectbox("RSV Vaccine / Prophylaxis", v_opt, index=v_opt.index(current_patient["rsv_status"]) if current_patient["rsv_status"] in v_opt else 1, key="tab1_edit_rsv")
 
         st.markdown("**Screening Tests Status:**")
         opt_list = ["Pending", "Pass", "Fail"]
-        edit_cchd = st.selectbox("CCHD Status", opt_list, index=opt_list.index(current_patient["cchd_status"]) if current_patient["cchd_status"] in opt_list else 0)
-        edit_red = st.selectbox("Red Reflex Status", opt_list, index=opt_list.index(current_patient["red_reflex_status"]) if current_patient["red_reflex_status"] in opt_list else 0)
-        edit_hearing = st.selectbox("Hearing Screening Status", opt_list, index=opt_list.index(current_patient["hearing_status"]) if current_patient["hearing_status"] in opt_list else 0)
+        edit_cchd = st.selectbox("CCHD Status", opt_list, index=opt_list.index(current_patient["cchd_status"]) if current_patient["cchd_status"] in opt_list else 0, key="tab1_edit_cchd")
+        edit_red = st.selectbox("Red Reflex Status", opt_list, index=opt_list.index(current_patient["red_reflex_status"]) if current_patient["red_reflex_status"] in opt_list else 0, key="tab1_edit_red")
+        edit_hearing = st.selectbox("Hearing Screening Status", opt_list, index=opt_list.index(current_patient["hearing_status"]) if current_patient["hearing_status"] in opt_list else 0, key="tab1_edit_hearing")
         
-        if st.button("Save Patient Updates"):
+        if st.button("Save Patient Updates", key="tab1_save_updates_btn"):
             conn = get_db_connection()
             conn.execute("UPDATE patients SET baby_name = ?, diagnosis = ?, management_plan = ?, next_labs_due = ?, cchd_status = ?, red_reflex_status = ?, hearing_status = ?, vit_k_status = ?, hepb_status = ?, rsv_status = ?, feeding_type = ? WHERE mrn = ?",
                          (edit_name, edit_diag, edit_mgmt, edit_labs, edit_cchd, edit_red, edit_hearing, edit_vit_k, edit_hepb, edit_rsv, edit_feeding, current_patient["mrn"]))
@@ -458,11 +484,11 @@ with tab1:
         
     col_st1, col_st2, col_st3 = st.columns(3)
     with col_st1:
-        new_status = st.selectbox("Patient Status", status_options, index=default_status_idx)
+        new_status = st.selectbox("Patient Status", status_options, index=default_status_idx, key="tab1_p_status")
     with col_st2:
-        discharge_notes = st.text_input("Follow-up Date / Transfer Notes", current_patient["discharge_notes"])
+        discharge_notes = st.text_input("Follow-up Date / Transfer Notes", current_patient["discharge_notes"], key="tab1_p_notes")
     with col_st3:
-        if st.button("Update Status"):
+        if st.button("Update Status", key="tab1_update_status_btn"):
             conn = get_db_connection()
             conn.execute("UPDATE patients SET status = ?, discharge_notes = ? WHERE mrn = ?", (new_status, discharge_notes, current_patient["mrn"]))
             conn.commit()
@@ -470,7 +496,7 @@ with tab1:
             st.success("Status updated successfully!")
             st.rerun()
 
-    if st.button("🗑️ Delete Patient Record"):
+    if st.button("🗑️ Delete Patient Record", key="tab1_delete_pat_btn"):
         conn = get_db_connection()
         conn.execute("DELETE FROM labs WHERE mrn = ?", (current_patient["mrn"],))
         conn.execute("DELETE FROM patients WHERE mrn = ?", (current_patient["mrn"],))
@@ -539,13 +565,13 @@ with tab2:
     with st.expander("➕ Add New SBR Result Manually"):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=53.0)
+            hours_life = st.number_input("Hours of Life (HOF)", min_value=0.0, max_value=720.0, value=53.0, key="tab2_sbr_hof")
         with col_b:
-            sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=245.0)
+            sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=245.0, key="tab2_sbr_val")
         with col_c:
-            sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"], index=0)
+            sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"], index=0, key="tab2_sbr_unit")
         
-        if st.button("Add SBR Reading & Evaluate"):
+        if st.button("Add SBR Reading & Evaluate", key="tab2_add_sbr_btn"):
             val_umol = convert_to_umol(sbr_val, sbr_unit)
             conn = get_db_connection()
             conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
@@ -590,7 +616,7 @@ with tab3:
     with st.expander("➕ Add Any Laboratory Test Manually"):
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
-            test_category = st.selectbox("Test Category", ["SBR (Bilirubin)", "CRP", "Calcium", "Creatinine", "CBC", "Thyroid (TSH)", "Electrolytes"])
+            test_category = st.selectbox("Test Category", ["SBR (Bilirubin)", "CRP", "Calcium", "Creatinine", "CBC", "Thyroid (TSH)", "Electrolytes"], key="tab3_t_cat")
         with col_t2:
             if test_category == "SBR (Bilirubin)":
                 custom_test_name = "SBR"
@@ -601,18 +627,18 @@ with tab3:
             elif test_category == "Creatinine":
                 custom_test_name = "Creatinine"
             elif test_category == "Thyroid (TSH)":
-                custom_test_name = st.selectbox("Select Test", ["Cord TSH", "Baby TSH", "Free T4"])
+                custom_test_name = st.selectbox("Select Test", ["Cord TSH", "Baby TSH", "Free T4"], key="tab3_t_tsh")
             elif test_category == "Electrolytes":
-                custom_test_name = st.selectbox("Select Test", ["Sodium (Na)", "Potassium (K)"])
+                custom_test_name = st.selectbox("Select Test", ["Sodium (Na)", "Potassium (K)"], key="tab3_t_elec")
             else:
-                custom_test_name = st.text_input("Enter Custom Lab Name", value="WBC")
+                custom_test_name = st.text_input("Enter Custom Lab Name", value="WBC", key="tab3_t_custom")
         with col_t3:
-            test_val = st.number_input("Test Value", value=1.9)
-            test_unit = st.text_input("Unit", value="mg/L")
+            test_val = st.number_input("Test Value", value=1.9, key="tab3_t_val")
+            test_unit = st.text_input("Unit", value="mg/L", key="tab3_t_unit")
 
-        test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]))
+        test_hours = st.number_input("Hours of Life at Lab Draw", min_value=0.0, max_value=720.0, value=compute_hours_of_life(current_patient["birth_date"]), key="tab3_t_hours")
 
-        if st.button("Save Lab Result & Update Cumulative Table"):
+        if st.button("Save Lab Result & Update Cumulative Table", key="tab3_save_lab_btn"):
             conn = get_db_connection()
             conn.execute("INSERT INTO labs (mrn, time_hours, datetime_str, test_name, test_value, unit) VALUES (?, ?, ?, ?, ?, ?)",
                          (current_patient["mrn"], test_hours, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), custom_test_name, test_val, test_unit))
@@ -624,6 +650,16 @@ with tab3:
     st.markdown("### 📋 Cumulative Lab Records & Comparison Table")
     raw_labs_df = current_patient["labs"]
     if not raw_labs_df.empty:
+        def get_reference(t_name):
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT min_val, max_val, unit FROM custom_references WHERE test_name = ?", (t_name,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return f"{row['min_val']} - {row['max_val']} {row['unit']}"
+            return "Standard Neonatal Range"
+
         display_labs = raw_labs_df.copy()
         display_labs["Hospital Reference Range"] = display_labs["test_name"].apply(lambda x: get_reference(x))
         st.dataframe(display_labs, use_container_width=True)
@@ -693,7 +729,7 @@ with tab5:
     st.subheader("📤 Shift Handover (Secure Internal & Print)")
     
     # Anonymization Toggle (إخفاء هوية المريض)
-    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية (Anonymize Patient Identity)", value=False)
+    anonymize_flag = st.checkbox("🔒 تفعيل إخفاء الهوية (Anonymize Patient Identity)", value=False, key="tab5_anon_checkbox")
     
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
@@ -727,7 +763,6 @@ Next Labs Due:
     st.markdown("### Report Preview (Secure Internal Review & Print):")
     st.code(handover_text, language="text")
     
-    if st.button("🖨️ Print Report (Save as PDF securely)"):
+    if st.button("🖨️ Print Report (Save as PDF securely)", key="tab5_print_btn"):
         st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
         st.info("Use your browser's print dialog (Ctrl+P / Cmd+P) to print or save as PDF securely.")
-
