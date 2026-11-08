@@ -20,9 +20,6 @@ st.markdown("""
 .metric-container { font-size: 11px !important; }
 .pink-warning { background-color: #ffe6f2; padding: 3px 6px; border-radius: 4px; border: 1px solid #ffb3d9; color: #99004d; font-weight: bold; display: inline-block; }
 .green-success { background-color: #e6ffed; padding: 3px 6px; border-radius: 4px; border: 1px solid #b3ffb3; color: #006622; font-weight: bold; display: inline-block; }
-.handover-container { border: 2px solid #333; padding: 20px; border-radius: 6px; background-color: #fff; color: #000; font-family: Arial, sans-serif; }
-.handover-section { font-weight: bold; background-color: #e6f2ff; color: #004080; padding: 8px; margin-top: 15px; border-left: 5px solid #004080; font-size: 14px; }
-.handover-item-title { font-weight: bold; color: #333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -373,7 +370,7 @@ for p in db_patients:
         "rbs": rbs_df
     }
 
-# --- Main Page: Add New Newborn (Manual Entry Hub - Empty by default when Actual Nursery is selected) ---
+# --- Main Page: Add New Newborn (Manual Entry Hub) ---
 st.markdown("---")
 with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(patients_dict) == 0 and "Actual" in mode_option):
     st.markdown("Enter new newborn details and maternal history:")
@@ -577,7 +574,7 @@ current_patient = patients_dict[selected_mrn]
 st.markdown("---")
 st.markdown(f"### 🩺 Active Patient Management: **{current_patient['baby_name']}** (MRN: {current_patient['mrn']})")
 
-# --- Main Interface Tabs (Screening, Feeding & Medications is Tab 2 as requested) ---
+# --- Main Interface Tabs ---
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📋 Crib Card & Profile", 
     "🍼 Screening, Feeding & Medications",
@@ -984,90 +981,76 @@ with tab7:
     p_name = "[ANONYMIZED PATIENT]" if anonymize_flag else current_patient['baby_name']
     p_mrn = "[HIDDEN MRN]" if anonymize_flag else current_patient['mrn']
     
-    def format_status_badge(val, is_abnormal_risk=False):
-        if not val or str(val).lower() in ["no", "pending", "none"]:
-            return f"{val}"
-        if is_abnormal_risk or any(w in str(val).upper() for w in ["POS", "POSITIVE", "FAIL", "GESTATIONAL DM", "PRE-EXISTING DM", "YES", "VARIABLE", "LATE"]):
-            return f'<span class="pink-warning">{val}</span>'
-        else:
-            return f'<span class="green-success">{val}</span>'
-
     mother_bg_str = f"{current_patient['mother_abo']} {current_patient['mother_rh']}"
-    mother_bg_html = f'<span class="pink-warning">{mother_bg_str}</span>' if ("O" in current_patient['mother_abo'] or "NEG" in current_patient['mother_rh']) else f'<span class="green-success">{mother_bg_str}</span>'
-
     dat_str = current_patient['dat']
-    dat_html = f'<span class="pink-warning">{dat_str}</span>' if "POS" in dat_str.upper() else f'<span class="green-success">{dat_str}</span>'
 
-    prom_html = f'<span class="pink-warning">{current_patient["prom_status"]}</span>' if current_patient["prom_status"] == "Yes" else "No"
-    ab_html = f'<span class="pink-warning">{current_patient["antibiotic_status"]} - {current_patient["antibiotic_name"]}</span>' if current_patient["antibiotic_status"] == "Yes" else "No"
-    hvs_html = f'<span class="pink-warning">Yes ({current_patient["hvs_organism"]})</span>' if current_patient["hvs_status"] == "Yes" else "No"
-    gbs_html = f'<span class="pink-warning">Yes ({current_patient["gbs_site"]})</span>' if current_patient["gbs_status"] == "Yes" else "No"
-    hypo_html = f'<span class="pink-warning">{current_patient["hypothyroid_status"]}</span>' if current_patient["hypothyroid_status"] == "Yes" else "No"
-    dm_html = f'<span class="pink-warning">{current_patient["dm_status"]}</span>' if current_patient["dm_status"] != "No" else "No"
+    # --- Clean Markdown Professional Handover Report ---
+    st.markdown("---")
+    st.markdown("### 🏥 NURSERY DEPARTMENT - SHIFT HANDOVER REPORT")
+    st.markdown(f"**Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | **Unit:** NURSERY")
+    st.markdown("---")
 
-    cchd_display = f"{current_patient['cchd_status']} (Right Hand SpO2: {current_patient['cchd_right_hand']}%, Lower Limb SpO2: {current_patient['cchd_lower_limb']}%)"
+    st.markdown("#### 1. IDENTIFICATION & SITUATION")
+    st.markdown(f"""
+    * **Patient Name:** **{p_name}**
+    * **MRN:** **{p_mrn}**
+    * **Gender & Gestational Age:** {current_patient['gender']} | {current_patient['gestational_age']}
+    * **Birth Weight & Date:** {current_patient['birth_weight']} | {current_patient['birth_date']}
+    * **Status & Consultant:** {current_patient['status']} | **{current_patient['primary_physician']}**
+    * **Diagnosis & Delivery Type:** {current_patient['diagnosis']} ({current_patient['delivery_type']})
+    * **Blood Groups & DAT:** Mother: `{mother_bg_str}` | Baby: `{current_patient['baby_abo']} {current_patient['baby_rh']}` | DAT: `{dat_str}`
+    """)
 
-    handover_markdown_view = f"""
-    <div class="handover-container">
-        <h3 align="center" style="color: #004080;">NURSERY DEPARTMENT - SHIFT HANDOVER REPORT</h3>
-        <p align="center"><b>Date:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | <b>Unit:</b> NURSERY</p>
-        
-        <div class="handover-section">1. IDENTIFICATION & SITUATION</div>
-        - <span class="handover-item-title">Patient Name:</span> <u><b>{p_name}</b></u><br>
-        - <span class="handover-item-title">MRN:</span> <u><b>{p_mrn}</b></u><br>
-        - <span class="handover-item-title">Gender & GA:</span> {current_patient['gender']} | {current_patient['gestational_age']}<br>
-        - <span class="handover-item-title">Birth Weight & Time:</span> {current_patient['birth_weight']} | {current_patient['birth_date']}<br>
-        - <span class="handover-item-title">Status & Consultant:</span> {current_patient['status']} | <b>{current_patient['primary_physician']}</b><br>
-        - <span class="handover-item-title">Diagnosis & Delivery:</span> {current_patient['diagnosis']} ({current_patient['delivery_type']})<br>
-        - <span class="handover-item-title">Blood Groups & DAT:</span> Mother [{mother_bg_html}] | Baby [{current_patient['baby_abo']} {current_patient['baby_rh']}] | DAT: [{dat_html}]
+    st.markdown("#### 2. BACKGROUND & MATERNAL HISTORY")
+    st.markdown(f"""
+    * **Obstetric Score:** Gravida: `{current_patient['gravida']}` | Para: `{current_patient['para']}` | Abortion: `{current_patient['abortion']}`
+    * **Previous Obstetric History:** {current_patient['obs_history'] or 'None'}
+    * **Family History:** {current_patient['family_history'] or 'None'}
+    * **Risk Factors & Screening:**
+        * **PROM:** `{current_patient['prom_status']}` (Hours: `{current_patient['prom_hours']}h {current_patient['prom_mins']}m`)
+        * **Antibiotic Received:** `{current_patient['antibiotic_status']}` ({current_patient['antibiotic_name']})
+        * **Pethidine / Opioids:** `{current_patient['pethidine_status']}` ({current_patient['pethidine_details']})
+        * **CTG Category & Findings:** `{current_patient['ctg_category']}` - {current_patient['ctg_findings']}
+        * **HVS Positive:** `{current_patient['hvs_status']}` ({current_patient['hvs_organism']})
+        * **GBS Positive:** `{current_patient['gbs_status']}` ({current_patient['gbs_site']})
+        * **Hypothyroidism:** `{current_patient['hypothyroid_status']}` ({current_patient['thyroxine_status']} - {current_patient['thyroxine_dose']})
+        * **Diabetes Mellitus (DM):** `{current_patient['dm_status']}` ({current_patient['dm_treatment']})
+        * **Other Maternal Diseases:** {current_patient['maternal_diseases'] or 'None'}
+    """)
 
-        <div class="handover-section">2. BACKGROUND & MATERNAL HISTORY</div>
-        - <span class="handover-item-title">Booking & Obstetric:</span> Gravida [{current_patient['gravida']}], Para [{current_patient['para']}], Abortion [{current_patient['abortion']}]<br>
-        - <span class="handover-item-title">Obstetric History:</span> {current_patient['obs_history'] or 'None'}<br>
-        - <span class="handover-item-title">Family History:</span> {current_patient['family_history'] or 'None'}<br>
-        - <span class="handover-item-title">Risk Factors & Screening:</span><br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>PROM:</b> {prom_html} ({current_patient['prom_hours']}h {current_patient['prom_mins']}m)<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Antibiotic:</b> {ab_html}<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Pethidine:</b> {current_patient['pethidine_status']} ({current_patient['pethidine_details']})<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>CTG:</b> {current_patient['ctg_category']} - {current_patient['ctg_findings']}<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>HVS Positive:</b> {hvs_html}<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>GBS Positive:</b> {gbs_html}<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Hypothyroidism:</b> {hypo_html}<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Diabetes Mellitus:</b> {dm_html}<br>
-          &nbsp;&nbsp;&nbsp;&nbsp;• <b>Other Diseases:</b> {current_patient['maternal_diseases'] or 'None'}
+    st.markdown("#### 3. ASSESSMENT, FEEDING & MEDICATIONS")
+    st.markdown(f"""
+    * **Feeding Type:** {current_patient['feeding_type']}
+    * **Medications & Vaccines:** Vitamin K: `{current_patient['vit_k_status']}` | Hep B: `{current_patient['hepb_status']}` | RSV: `{current_patient['rsv_status']}`
+    * **Neonatal Screening Tests:** CCHD: `{current_patient['cchd_status']}` (Right Hand: `{current_patient['cchd_right_hand']}%`, Lower Limb: `{current_patient['cchd_lower_limb']}%`) | Red Reflex: `{current_patient['red_reflex_status']}` | Hearing: `{current_patient['hearing_status']}`
+    * **Management Plan:**
+      {current_patient['management_plan']}
+    """)
 
-        <div class="handover-section">3. ASSESSMENT, FEEDING & MEDICATIONS</div>
-        - <span class="handover-item-title">Feeding Type:</span> {current_patient['feeding_type']}<br>
-        - <span class="handover-item-title">Medications & Vaccines:</span> Vit K [{current_patient['vit_k_status']}] | Hep B [{current_patient['hepb_status']}] | RSV [{current_patient['rsv_status']}]<br>
-        - <span class="handover-item-title">Screening Tests:</span> CCHD [{format_status_badge(cchd_display)}] | Red Reflex [{format_status_badge(current_patient['red_reflex_status'])}] | Hearing [{format_status_badge(current_patient['hearing_status'])}]<br>
-        - <span class="handover-item-title">Management Plan:</span><br>
-          {current_patient['management_plan']}
-
-        <div class="handover-section">4. CUMULATIVE LABORATORY RESULTS</div>
-    """
-
-    st.markdown("### Report Preview (Professional Form Format):")
-    st.markdown(handover_markdown_view, unsafe_allow_html=True)
-
+    st.markdown("#### 4. CUMULATIVE LABORATORY RESULTS")
     if not current_patient["labs"].empty:
         labs_display_df = current_patient["labs"][["sample_datetime", "hours_elapsed", "test_name", "test_value", "unit"]].copy()
-        labs_display_df.columns = ["Sample Time", "Hours", "Test Name", "Value", "Unit"]
+        labs_display_df.columns = ["Sample Time", "Hours of Life", "Test Name", "Value", "Unit"]
         st.dataframe(labs_display_df, use_container_width=True)
     else:
-        st.info("No labs recorded.")
+        st.info("No laboratory records found for this patient.")
 
-    st.markdown('<div class="handover-section">5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY</div>', unsafe_allow_html=True)
-    st.markdown(f"- <span class=\"handover-item-title\">Echocardiography Status:</span> {current_patient['echo_status'] or 'Not requested'}<br>- <span class=\"handover-item-title\">Echo Result:</span> {current_patient['echo_result'] or 'N/A'} (Follow-up: {current_patient['echo_followup_months']} months)<br>- <span class=\"handover-item-title\">Consultations:</span> {current_patient['consultation_type'] or 'None'}", unsafe_allow_html=True)
+    st.markdown("#### 5. RADIOLOGY, ULTRASOUND & ECHOCARDIOGRAPHY")
+    st.markdown(f"""
+    * **Echocardiography Status:** {current_patient['echo_status'] or 'Not requested'}
+    * **Echo Result:** {current_patient['echo_result'] or 'N/A'} (Follow-up: `{current_patient['echo_followup_months']}` months)
+    * **Specialist Consultations:** {current_patient['consultation_type'] or 'None'}
+    """)
 
     if not current_patient["imaging"].empty:
         img_display_df = current_patient["imaging"][["img_date", "img_type", "img_name", "img_result"]].copy()
-        img_display_df.columns = ["Date", "Type", "Name", "Findings"]
+        img_display_df.columns = ["Date", "Type", "Name", "Findings / Result"]
         st.dataframe(img_display_df, use_container_width=True)
     else:
-        st.info("No imaging or echo recorded.")
+        st.info("No imaging or ultrasound records found.")
 
-    st.markdown('<div class="handover-section">6. NEXT LABS DUE</div>', unsafe_allow_html=True)
-    st.markdown(f"<b>{current_patient['next_labs_due']}</b>", unsafe_allow_html=True)
+    st.markdown("#### 6. NEXT LABS DUE & DISCHARGE NOTES")
+    st.warning(f"⏰ **Next Labs Due:** {current_patient['next_labs_due']}\n\n📝 **Discharge / Transfer Notes:** {current_patient['discharge_notes'] or 'None'}")
 
     st.markdown("---")
     if st.button("🖨️ Print Report / Save as PDF securely", key="tab7_print_btn"):
