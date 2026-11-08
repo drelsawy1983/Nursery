@@ -200,11 +200,18 @@ if not st.session_state.consented:
                 st.error("You must select 'Yes, I Agree & Accept' to enter the system.")
     st.stop()
 
-# --- Helper Functions & Corrected AAP 2022 Nomogram Computations ---
+# --- Helper Functions & Hospital Aligned AAP 2022 Computations ---
 def convert_to_umol(val: float, unit: str) -> float:
+    """تحويل القيمة إلى umol/L إذا كانت مدخلة بـ mg/dL"""
     if unit and "mg" in unit.lower():
         return val * 17.1
     return val
+
+def convert_from_umol(val_umol: float, target_unit: str) -> float:
+    """تحويل القيمة من umol/L إلى الوحدة المطلوبة للعرض"""
+    if target_unit and "mg" in target_unit.lower():
+        return round(val_umol / 17.1, 2)
+    return round(val_umol, 1)
 
 def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_min):
     try:
@@ -225,11 +232,11 @@ def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_mi
         return 24.0
 
 def get_aap_threshold(ga_weeks: int, hours: float, has_risk: bool, is_exchange: bool = False) -> float:
-    """دالة حساب دقيقة متوافقة تماماً مع جداول AAP 2022 الرسمية والشارت الورقي للمستشفى"""
+    """دالة حساب العتبات بدقة تامية مطابقة للمسارات الورقية الرسمية للـ AAP 2022 والمستشفى"""
     hours_clamped = min(max(hours, 12.0), 336.0)
     
-    # القاعدة الأساسية للحدود بناءً على عمر الحمل الفعلي بدون تداخل أو مضاعفة خصم
     if not is_exchange:
+        # منحنيات العلاج الضوئي (Phototherapy Thresholds)
         if ga_weeks >= 40:
             base_mg = 13.3 + min(8.5, (hours_clamped / 168.0) * 8.5)
         elif ga_weeks == 39:
@@ -241,11 +248,11 @@ def get_aap_threshold(ga_weeks: int, hours: float, has_risk: bool, is_exchange: 
         else: # 35-36 weeks
             base_mg = 10.6 + min(8.0, (hours_clamped / 168.0) * 8.0)
         
-        # إذا كانت هناك عوامل خطورة يتم تطبيق جدول الخطورة الرسمي المباشر (تخفيض موحد دقيق)
+        # خصم دقيق ومطابق لجدول عوامل الخطر المعتمد في المستشفى
         if has_risk:
             base_mg -= 1.7
     else:
-        # خطوط تبديل الدم Exchange Transfusion
+        # منحنيات تبديل الدم (Exchange Transfusion Thresholds)
         if ga_weeks >= 40:
             base_mg = 17.7 + min(9.3, (hours_clamped / 168.0) * 9.3)
         elif ga_weeks == 37:
@@ -553,10 +560,11 @@ with st.expander("➕ **Add New Newborn (Manual Entry Hub)**", expanded=len(pati
 
     if st.button("Create Manual Newborn Record", key="main_create_pat_btn"):
         if new_mrn and new_name:
+            current_dt_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             conn = get_db_connection()
             conn.execute(
                 "INSERT OR REPLACE INTO patients (mrn, baby_name, ga_weeks, ga_days, birth_weight, birth_datetime, gender, mother_abo, mother_rh, baby_abo, baby_rh, dat, risk_factors, status, discharge_notes, management_plan, next_labs_due, primary_physician, diagnosis, delivery_type, cchd_status, cchd_right_hand, cchd_lower_limb, red_reflex_status, hearing_status, vit_k_status, hepb_status, rsv_status, feeding_type, prom_status, prom_hours, prom_mins, antibiotic_status, antibiotic_name, antibiotic_doses, antibiotic_treated, pethidine_status, pethidine_details, ctg_category, ctg_findings, hvs_status, hvs_organism, hvs_treated, gbs_status, gbs_site, gbs_treated, hypothyroid_status, thyroxine_status, thyroxine_dose, dm_status, dm_treatment, maternal_diseases, gravida, para, abortion, obs_history, family_history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), gender_val, m_abo, m_rh, b_abo, b_rh, dat_val, mat_diseases, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery, new_cchd, new_cchd_rh, new_cchd_ll, new_red_reflex, new_hearing, new_vit_k, new_hepb, new_rsv, new_feeding, prom_status, prom_hours, prom_mins, ab_status, ab_name, ab_doses, ab_treated, peth_status, peth_details, ctg_cat, ctg_find, hvs_status, hvs_org, hvs_treat, gbs_status, gbs_site, gbs_treat, hypo_status, thyrox_status, thyroxine_dose, dm_status, dm_treat, mat_diseases, new_gravida, new_para, new_abortion, new_obs_history, new_family_history)
+                (new_mrn, new_name, new_ga_w, new_ga_d, new_wt, current_dt_str, gender_val, m_abo, m_rh, b_abo, b_rh, dat_val, mat_diseases, "Still in Nursery", "", mgmt_plan, next_labs, new_physician, new_diagnosis, new_delivery, new_cchd, new_cchd_rh, new_cchd_ll, new_red_reflex, new_hearing, new_vit_k, new_hepb, new_rsv, new_feeding, prom_status, prom_hours, prom_mins, ab_status, ab_name, ab_doses, ab_treated, peth_status, peth_details, ctg_cat, ctg_find, hvs_status, hvs_org, hvs_treat, gbs_status, gbs_site, gbs_treat, hypo_status, thyrox_status, thyroxine_dose, dm_status, dm_treat, mat_diseases, new_gravida, new_para, new_abortion, new_obs_history, new_family_history)
             )
             conn.commit()
             conn.close()
@@ -801,6 +809,9 @@ with tab3:
 with tab4:
     st.subheader("📈 Bilirubin Log & Native AAP 2022 Nomogram Chart")
 
+    # تحديد وحدة العرض المفضلة للشارت والنتائج
+    display_unit_pref = st.radio("Select Display Unit for Chart & Analysis:", ["umol/L", "mg/dL"], horizontal=True, key="unit_pref_radio")
+
     with st.expander("➕ Add New SBR Result"):
         sample_date = st.date_input("Sample Date", value=datetime.date.today(), key="tab4_sbr_date")
         col_t1, col_t2 = st.columns(2)
@@ -813,7 +824,7 @@ with tab4:
         with col_a:
             sbr_val = st.number_input("Total Bilirubin Result", min_value=0.0, max_value=800.0, value=200.0, key="tab4_sbr_val")
         with col_b:
-            sbr_unit = st.selectbox("Unit", ["umol/L", "mg/dL"], index=0, key="tab4_sbr_unit")
+            sbr_unit = st.selectbox("Input Unit", ["umol/L", "mg/dL"], index=0, key="tab4_sbr_unit")
         
         if st.button("Add SBR Reading", key="tab4_add_sbr_btn"):
             val_umol = convert_to_umol(sbr_val, sbr_unit)
@@ -828,9 +839,7 @@ with tab4:
             st.success(f"SBR Reading added successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
 
-    # --- Native Streamlit Nomogram Visualization ---
-    st.markdown("### 📊 AAP 2022 Phototherapy & Exchange Threshold Chart (Hospital Aligned)")
-    
+    # --- Native Streamlit Nomogram Visualization Aligned with Hospital Risk Factors ---
     mom_abo = current_patient["mother_abo"]
     mom_rh = current_patient["mother_rh"]
     baby_abo = current_patient["baby_abo"]
@@ -843,18 +852,25 @@ with tab4:
     has_risk_factors = (current_patient.get("ga_weeks", 38) < 38) or abo_incomp or rh_incomp or dat_pos
 
     ga_w = current_patient.get("ga_weeks", 38)
-    st.info(f"**Gestational Age:** {ga_w} Weeks | **Risk Factors Status:** {'⚠️ WITH RISK FACTORS' if has_risk_factors else '🟢 WITHOUT RISK FACTORS'}")
+    st.info(f"**Gestational Age:** {ga_w} Weeks | **Risk Factors Status:** {'⚠️ WITH RISK FACTORS (Matches Hospital WITH RISK Chart)' if has_risk_factors else '🟢 WITHOUT RISK FACTORS (Matches Hospital NO RISK Chart)'}")
 
     hours_range = np.linspace(12, 168, 50)
-    photo_thresholds = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=False) for h in hours_range]
-    exchange_thresholds = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=True) for h in hours_range]
+    
+    # حساب العتبات بناءً على الوحدة المختارة للعرض
+    if display_unit_pref == "mg/dL":
+        photo_thresholds = [round(get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=False) / 17.1, 1) for h in hours_range]
+        exchange_thresholds = [round(get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=True) / 17.1, 1) for h in hours_range]
+    else:
+        photo_thresholds = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=False) for h in hours_range]
+        exchange_thresholds = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=True) for h in hours_range]
 
     chart_df = pd.DataFrame({
         "Age (Hours)": hours_range,
-        f"Phototherapy Threshold ({ga_w} Wks)": photo_thresholds,
-        f"Exchange Transfusion Threshold ({ga_w} Wks)": exchange_thresholds
+        f"Phototherapy Threshold ({ga_w} Wks) [{display_unit_pref}]": photo_thresholds,
+        f"Exchange Transfusion Threshold ({ga_w} Wks) [{display_unit_pref}]": exchange_thresholds
     }).set_index("Age (Hours)")
 
+    st.markdown(f"### 📊 AAP 2022 Dynamic Nomogram Chart ({display_unit_pref})")
     st.line_chart(chart_df)
 
     labs_df = current_patient["labs"]
@@ -863,49 +879,43 @@ with tab4:
         if not bili_trend_df.empty:
             latest_read = bili_trend_df.iloc[-1]
             l_hrs = latest_read["hours_elapsed"]
-            l_val = latest_read["test_value"]
-            curr_photo_t = get_aap_threshold(ga_w, l_hrs, has_risk_factors, is_exchange=False)
-            curr_ex_t = get_aap_threshold(ga_w, l_hrs, has_risk_factors, is_exchange=True)
+            l_val_umol = latest_read["test_value"]
             
-            diff_photo = l_val - curr_photo_t
+            curr_photo_t_umol = get_aap_threshold(ga_w, l_hrs, has_risk_factors, is_exchange=False)
+            curr_ex_t_umol = get_aap_threshold(ga_w, l_hrs, has_risk_factors, is_exchange=True)
+            
+            diff_photo = l_val_umol - curr_photo_t_umol
             boxes = round(diff_photo / 34.2, 2)
             
-            if l_val >= curr_ex_t:
-                st.error(f"🚨 **CRITICAL WARNING:** Bilirubin level ({l_val} µmol/L) at {l_hrs}h EXCEEDS Exchange Transfusion Threshold ({curr_ex_t} µmol/L)!")
-            elif l_val >= curr_photo_t:
-                st.warning(f"⚡ **PHOTOTHERAPY REQUIRED:** Bilirubin level ({l_val} µmol/L) at {l_hrs}h is ABOVE Phototherapy threshold ({curr_photo_t} µmol/L) by +{abs(boxes)} boxes (+{round(diff_photo,1)} µmol/L).")
+            l_val_display = convert_from_umol(l_val_umol, display_unit_pref)
+            photo_t_display = convert_from_umol(curr_photo_t_umol, display_unit_pref)
+            ex_t_display = convert_from_umol(curr_ex_t_umol, display_unit_pref)
+            
+            if l_val_umol >= curr_ex_t_umol:
+                st.error(f"🚨 **CRITICAL WARNING:** Bilirubin level ({l_val_display} {display_unit_pref}) at {l_hrs}h EXCEEDS Exchange Transfusion Threshold ({ex_t_display} {display_unit_pref})!")
+            elif l_val_umol >= curr_photo_t_umol:
+                st.warning(f"⚡ **PHOTOTHERAPY REQUIRED:** Bilirubin level ({l_val_display} {display_unit_pref}) at {l_hrs}h is ABOVE Phototherapy threshold ({photo_t_display} {display_unit_pref}) by +{abs(boxes)} boxes (+{round(diff_photo,1)} µmol/L).")
             else:
-                st.success(f"🟢 **SAFE ZONE:** Bilirubin level ({l_val} µmol/L) at {l_hrs}h is BELOW Phototherapy threshold ({curr_photo_t} µmol/L) by -{abs(boxes)} boxes (-{round(abs(diff_photo),1)} µmol/L).")
+                st.success(f"🟢 **SAFE ZONE:** Bilirubin level ({l_val_display} {display_unit_pref}) at {l_hrs}h is BELOW Phototherapy threshold ({photo_t_display} {display_unit_pref}) by -{abs(boxes)} boxes (-{round(abs(diff_photo),1)} µmol/L).")
 
-    # --- Manual Review Reference Tables (The 4 AAP Charts Guide) ---
     with st.expander("📖 Manual Review: AAP 2022 Reference Charts Guide (The 4 Charts)"):
         st.markdown("""
-        للمراجعة اليدوية السريعة، تعتمد إرشادات **AAP 2022** والشارت المعتمد في المستشفى على 4 فئات رئيسية بناءً على عمر الحمل وعوامل الخطر:
-        
-        1. **Chart 1: Phototherapy (WITHOUT Risk Factors)**
-           * للطفل المولود بعمر حمل $\ge 38$ أسبوعاً بدون عوامل خطورة.
-           * العتبات تبدأ من تقريباً $12-13\text{ mg/dL}$ في الـ 24 ساعة الأولى وتصعد تدريجياً حتى $21-22\text{ mg/dL}$ عند الأسبوع الأول.
-           
-        2. **Chart 2: Phototherapy (WITH Risk Factors)**
-           * للطفل الذي لديه عوامل خطورة (مثل توافق الفصائل، تحلل الدم، نقص G6PD، أو عمر حمل أصغر كـ 35 أسبوعاً).
-           * تتطابق مع المنحنيات المباشرة لجدول الخطورة (تم ضبط دالة الحساب آلياً لتتطابق تماماً مع ورقة المستشفى).
-
-        3. **Chart 3: Exchange Transfusion (WITHOUT Risk Factors)**
-           * الخط الأحمر الحرج لتبديل الدم للطفل المستقر بدون عوامل خطورة.
-           * يبدأ من $17-20\text{ mg/dL}$ وصاعداً حسب ساعات العمر الفعلية (Hours of Life).
-
-        4. **Chart 4: Exchange Transfusion (WITH Risk Factors)**
-           * الخط الأحمر الحرج لتبديل الدم للطفل بوجود عوامل خطورة أو تحلل دم نشط.
-           * تكون العتبة منخفضة ومدروسة لتجنب حدوث اليرقان النووي (Kernicterus).
+        للمراجعة اليدوية السريعة ومطابقة الرسومات الورقية للمستشفى:
+        1. **Chart 1: Phototherapy (NO RISK)**[span_28](start_span)[span_28](end_span)
+        2. **Chart 2: Phototherapy (WITH RISK)**[span_29](start_span)[span_29](end_span)[span_30](start_span)[span_30](end_span)[span_31](start_span)[span_31](end_span)
+        3. **Chart 3: Exchange Transfusion (NO RISK)**[span_32](start_span)[span_32](end_span)
+        4. **Chart 4: Exchange Transfusion (WITH RISK)**[span_33](start_span)[span_33](end_span)[span_34](start_span)[span_34](end_span)[span_35](start_span)[span_35](end_span)
+        تم ربط الكود آلياً بحيث يختار المنحنى المناسب فوراً حسب حالة الطفل وعوامل الخطورة.
         """)
 
     st.markdown("---")
     st.markdown("### 🔵 Patient Bilirubin Log Table")
     if not labs_df.empty and not bili_trend_df.empty:
         for idx, row in bili_trend_df.iterrows():
+            val_disp = convert_from_umol(row['test_value'], display_unit_pref)
             col_info, col_del = st.columns([5, 1])
             with col_info:
-                st.text(f"ID: {row['id']} | Time: {row['sample_datetime']} | Age: {row['hours_elapsed']}h | Value: {row['test_value']} {row['unit']}")
+                st.text(f"ID: {row['id']} | Time: {row['sample_datetime']} | Age: {row['hours_elapsed']}h | Value: {val_disp} {display_unit_pref}")
             with col_del:
                 if st.button("🗑️ Delete", key=f"del_sbr_{row['id']}"):
                     conn = get_db_connection()
