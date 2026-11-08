@@ -6,7 +6,6 @@ import datetime
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -229,10 +228,9 @@ def calculate_hours_from_parts(birth_dt_str, sample_date, sample_hour, sample_mi
         return 24.0
 
 def get_aap_threshold(ga_weeks: int, hours: float, has_risk: bool, is_exchange: bool = False) -> float:
-    """حساب منحنيات العلاج الضوئي وتبديل الدم المعتمدة هيدروديناميكياً حسب AAP 2022"""
+    """حساب منحنيات العلاج الضوئي وتبديل الدم المعتمدة حسب AAP 2022"""
     hours_clamped = min(max(hours, 12.0), 336.0)
     
-    # الأساس لـ 38 أسبوعاً أو أكثر (mg/dL)
     if not is_exchange:
         if hours_clamped <= 24:
             base_mg = 5.0 + (hours_clamped / 24.0) * 7.0
@@ -254,7 +252,6 @@ def get_aap_threshold(ga_weeks: int, hours: float, has_risk: bool, is_exchange: 
         else:
             base_mg = 24.0 + min(1.0, ((hours_clamped - 72) / 100.0))
 
-    # التعديل حسب عمر الحمل (Gestational Age)
     if ga_weeks >= 40:
         ga_adj = 0.5
     elif ga_weeks == 39:
@@ -814,7 +811,7 @@ with tab3:
             st.rerun()
 
 with tab4:
-    st.subheader("📈 Bilirubin Log & Interactive AAP 2022 Nomogram Chart")
+    st.subheader("📈 Bilirubin Log & Native AAP 2022 Nomogram Chart")
 
     with st.expander("➕ Add New SBR Result"):
         sample_date = st.date_input("Sample Date", value=datetime.date.today(), key="tab4_sbr_date")
@@ -843,10 +840,9 @@ with tab4:
             st.success(f"SBR Reading added successfully! (Hours of Life: {computed_hours}h)")
             st.rerun()
 
-    # --- Interactive Plotly Nomogram Visualization ---
+    # --- Native Streamlit Nomogram Visualization (Zero Dependency Error) ---
     st.markdown("### 📊 AAP 2022 Phototherapy & Exchange Threshold Chart")
     
-    # Calculate Risk Factor Status
     mom_abo = current_patient["mother_abo"]
     mom_rh = current_patient["mother_rh"]
     baby_abo = current_patient["baby_abo"]
@@ -861,29 +857,22 @@ with tab4:
     ga_w = current_patient.get("ga_weeks", 38)
     st.info(f"**Gestational Age:** {ga_w} Weeks | **Risk Factors Status:** {'⚠️ WITH RISK FACTORS' if has_risk_factors else '🟢 WITHOUT RISK FACTORS'}")
 
-    x_hrs = np.linspace(12, 168, 100)
-    photo_curve = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=False) for h in x_hrs]
-    exchange_curve = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=True) for h in x_hrs]
+    hours_range = np.linspace(12, 168, 50)
+    photo_thresholds = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=False) for h in hours_range]
+    exchange_thresholds = [get_aap_threshold(ga_w, h, has_risk_factors, is_exchange=True) for h in hours_range]
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x_hrs, y=photo_curve, mode='lines', name=f'Phototherapy Threshold ({ga_w} Wks)', line=dict(color='orange', width=3, dash='dash')))
-    fig.add_trace(go.Scatter(x=x_hrs, y=exchange_curve, mode='lines', name=f'Exchange Transfusion Threshold ({ga_w} Wks)', line=dict(color='red', width=3)))
+    chart_df = pd.DataFrame({
+        "Age (Hours)": hours_range,
+        f"Phototherapy Threshold ({ga_w} Wks)": photo_thresholds,
+        f"Exchange Transfusion Threshold ({ga_w} Wks)": exchange_thresholds
+    }).set_index("Age (Hours)")
+
+    st.line_chart(chart_df)
 
     labs_df = current_patient["labs"]
     if not labs_df.empty:
         bili_trend_df = labs_df[labs_df["test_name"].str.upper().isin(["SBR", "TOTAL BILIRUBIN", "BILIRUBIN"])].sort_values("hours_elapsed")
         if not bili_trend_df.empty:
-            fig.add_trace(go.Scatter(
-                x=bili_trend_df["hours_elapsed"],
-                y=bili_trend_df["test_value"],
-                mode='markers+lines+text',
-                name='Patient SBR Levels',
-                text=[f"{v} umol/L" for v in bili_trend_df["test_value"]],
-                textposition="top center",
-                marker=dict(size=10, color='blue', symbol='diamond')
-            ))
-            
-            # Clinical Decision Evaluation based on latest reading
             latest_read = bili_trend_df.iloc[-1]
             l_hrs = latest_read["hours_elapsed"]
             l_val = latest_read["test_value"]
@@ -899,16 +888,6 @@ with tab4:
                 st.warning(f"⚡ **PHOTOTHERAPY REQUIRED:** Bilirubin level ({l_val} µmol/L) at {l_hrs}h is ABOVE Phototherapy threshold ({curr_photo_t} µmol/L) by +{abs(boxes)} boxes (+{round(diff_photo,1)} µmol/L).")
             else:
                 st.success(f"🟢 **SAFE ZONE:** Bilirubin level ({l_val} µmol/L) at {l_hrs}h is BELOW Phototherapy threshold ({curr_photo_t} µmol/L) by -{abs(boxes)} boxes (-{round(abs(diff_photo),1)} µmol/L).")
-
-    fig.update_layout(
-        title=f"AAP 2022 Nomogram - {current_patient['baby_name']} (GA: {ga_w} Wks)",
-        xaxis_title="Age (Hours of Life)",
-        yaxis_title="Total Serum Bilirubin (µmol/L)",
-        hovermode="x unified",
-        template="plotly_white",
-        height=500
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
     st.markdown("### 🔵 Patient Bilirubin Log Table")
